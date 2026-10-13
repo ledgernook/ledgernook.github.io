@@ -1,4 +1,5 @@
 import { createPushScheduler } from "./push-scheduler.js";
+import { createSyncOperation } from "./sync-operation.js";
 import { blankManualDraft, keypadAmount, manualCommand, restoreManualDraft, unrecordedManualDraft, shouldReplaceManualDraft, trimManualAmount } from "./manual-entry-model.js";
 import { unrecordedNoticeModel, showFirstCaptureCard } from "./unrecorded-model.js";
 import { unrecordedNotice } from "./unrecorded-view.js";
@@ -34,6 +35,7 @@ import { createReportFeature } from "./report-feature.js";
 import { coverageDisclosure, synchronizationStatus } from "./states-model.js";
 import { isAutomaticCaptureRecord } from "./record-list-model.js";
 import { syncRecoveryCopy } from "./sync-recovery-copy.js";
+const SYNC_OPERATION_TIMEOUT_MS = 120_000;
 /** In-memory identity state for records that arrived or were saved during this session. */
 export class FreshRecordTracker {
     loadedIds = new Set();
@@ -101,15 +103,27 @@ export function mountViewerApp(root, session, options) {
             synchronization = "syncing";
             pendingCountVisible = false;
             render();
+            const operation = createSyncOperation(SYNC_OPERATION_TIMEOUT_MS);
+            activePushOperations.add(operation);
+            let outcome;
             try {
-                return await session.push({ requestedMonth: dateAt(options.now(), result.timeZone).slice(0, 7).replace("-", "/"), manual: true });
+                outcome = await session.push({ requestedMonth: dateAt(options.now(), result.timeZone).slice(0, 7).replace("-", "/"), manual: true,
+                    signal: operation.signal });
             }
             catch {
-                return { status: "temporary", reason: "incomplete" };
+                outcome = { status: "temporary", reason: "incomplete" };
             }
+            finally {
+                activePushOperations.delete(operation);
+                operation.finish();
+            }
+            return outcome;
         },
         async outcome(outcome) {
+            if (disposed)
+                return;
             if (outcome.status === "credential-rejected") {
+                historyContinuationPending = false;
                 await clearRejectedConnection();
                 return;
             }
@@ -309,6 +323,13 @@ export function mountViewerApp(root, session, options) {
     // Older history keeps loading in bounded batches while the app is visible; a hidden page resumes on return.
     let historyTimer, historyPaused = false, historyRemaining = Infinity;
     let historyRetries = 0, historyContinuationPending = false, historyRoundRunning = false;
+    let syncGeneration = 0, activeSyncOperation;
+    const activePushOperations = new Set();
+    let pageWasHidden = false;
+    function abandonActiveSync() {
+        syncGeneration++;
+        activeSyncOperation?.abort();
+    }
     let clearing = false;
     async function clearRejectedConnection() {
         if (clearing || disposed)
@@ -1305,15 +1326,42 @@ export function mountViewerApp(root, session, options) {
         });
     }
     function onVisibilityChange() {
-        pushScheduler.visibilityChanged();
-        if (document.visibilityState !== "hidden" && historyPaused) {
-            historyPaused = false;
-            continueHistory();
+        if (!result) {
+            pageWasHidden = document.visibilityState === "hidden";
+            pushScheduler.visibilityChanged();
+            if (pageWasHidden)
+                pushOnLeave();
+            return;
         }
         if (document.visibilityState === "hidden") {
+            pageWasHidden = true;
+            if (!result.report.coverage.complete) {
+                historyPaused = true;
+                if (historyRoundRunning || activeSyncOperation?.current) {
+                    syncGeneration++;
+                    activeSyncOperation?.abort();
+                }
+            }
+            pushScheduler.visibilityChanged();
             pushOnLeave();
             stopCompanionMotion();
             companionOverviewVisible = false;
+            return;
+        }
+        pushScheduler.visibilityChanged();
+        const resumeHistory = historyPaused || session.kind === "private" && !result.report.coverage.complete;
+        historyPaused = false;
+        if (resumeHistory) {
+            historyRetries = 0;
+            if (historyRoundRunning || activeSyncOperation?.current) {
+                historyContinuationPending = true;
+                synchronization = "syncing";
+                statusMessage = undefined;
+                render();
+                abandonActiveSync();
+            }
+            else
+                void sync(false, false, true).then(() => pushScheduler.immediate());
         }
         else if (!disposed && result && !settings && tab === "home") {
             const now = options.now();
@@ -1334,17 +1382,37 @@ export function mountViewerApp(root, session, options) {
                     restartCompanionMotion(motion);
             }
         }
-        if (document.visibilityState !== "hidden" && !disposed)
+        pageWasHidden = false;
+        if (!disposed && !resumeHistory)
             void sync(false, false, true).then(() => pushScheduler.immediate());
+    }
+    function onPageShow() {
+        if (disposed || !pageWasHidden || document.visibilityState === "hidden")
+            return;
+        onVisibilityChange();
     }
     const observesVisibilityChange = typeof document.addEventListener === "function";
     if (observesVisibilityChange)
         document.addEventListener("visibilitychange", onVisibilityChange);
     function pushOnLeave() { if (!disposed)
         void pushScheduler.immediate(); }
+    function onPageHide() {
+        pageWasHidden = true;
+        if (result && !result.report.coverage.complete) {
+            historyPaused = true;
+            if (historyRoundRunning || activeSyncOperation?.current) {
+                syncGeneration++;
+                activeSyncOperation?.abort();
+            }
+        }
+        pushOnLeave();
+    }
     const observesPageHide = typeof window.addEventListener === "function";
     if (observesPageHide)
-        window.addEventListener("pagehide", pushOnLeave);
+        window.addEventListener("pagehide", onPageHide);
+    const observesPageShow = typeof window.addEventListener === "function";
+    if (observesPageShow)
+        window.addEventListener("pageshow", onPageShow);
     function render() {
         if (disposed || !result)
             return;
@@ -1836,15 +1904,31 @@ export function mountViewerApp(root, session, options) {
         if (outcome.status === "confirmed" || outcome.status === "pending")
             void pushScheduler.immediate();
     }
-    async function sync(manual = true, pushPending = manual, keepCompanionSteady = false) {
+    async function sync(manual = true, pushPending = manual, keepCompanionSteady = false, abandonBusy = manual) {
         if (disposed)
             return;
-        if (historyRoundRunning || synchronization === "syncing") {
+        if (historyRoundRunning || activeSyncOperation?.current) {
             historyContinuationPending = true;
+            synchronization = "syncing";
+            statusMessage = undefined;
+            pendingCountVisible = false;
+            render();
+            if (abandonBusy) {
+                if (manual && pushPending)
+                    historyRetries = 0;
+                abandonActiveSync();
+            }
             return;
         }
+        if (synchronization === "syncing")
+            synchronization = result.report.coverage.complete ? "synced" : "incomplete";
+        if (manual && pushPending)
+            historyRetries = 0;
         historyContinuationPending = false;
         historyRoundRunning = true;
+        const generation = ++syncGeneration;
+        const operation = createSyncOperation(SYNC_OPERATION_TIMEOUT_MS);
+        activeSyncOperation = operation;
         let continueAfterRound = false;
         try {
             const establishingBaseline = !freshRecordsReady;
@@ -1856,8 +1940,32 @@ export function mountViewerApp(root, session, options) {
             render();
             let outcomes = [];
             let successfulRound = false;
+            const settleTimeout = async () => {
+                firstLoad = false;
+                await refresh();
+                if (generation !== syncGeneration)
+                    return;
+                synchronization = result.report.coverage.complete ? "failed" : "incomplete";
+                routineBackgroundSync = false;
+                render();
+                if (!result.report.coverage.complete) {
+                    const missingMonths = new Set(result.report.coverage.missing.flatMap(path => {
+                        const match = /^(?:events|details|unrecorded)\/v1\/(\d{4}\/\d{2})$/.exec(path);
+                        return match ? [match[1]] : [];
+                    })).size;
+                    historyRemaining = missingMonths || Infinity;
+                    continueAfterRound = ++historyRetries < 3;
+                }
+            };
             try {
-                outcomes = await session.synchronize({ period: result.report.period, manual });
+                outcomes = await session.synchronize({ period: result.report.period, manual, signal: operation.signal });
+                if (generation !== syncGeneration)
+                    return;
+                if (operation.end === "timed-out") {
+                    await settleTimeout();
+                    return;
+                }
+                operation.finish();
                 if (outcomes.some(item => item.status === "unauthorized" || item.status === "forbidden")) {
                     routineBackgroundSync = false;
                     historyRemaining = Infinity;
@@ -1876,10 +1984,20 @@ export function mountViewerApp(root, session, options) {
                     synchronization = "failed";
             }
             catch {
-                synchronization = "failed";
+                if (generation === syncGeneration)
+                    synchronization = "failed";
             }
+            if (generation !== syncGeneration)
+                return;
+            if (operation.end === "timed-out") {
+                await settleTimeout();
+                return;
+            }
+            operation.finish();
             firstLoad = false;
             await refresh();
+            if (generation !== syncGeneration)
+                return;
             void pushScheduler.pendingChanged();
             if (successfulRound)
                 synchronization = result.report.coverage.complete ? "synced" : "incomplete";
@@ -1888,11 +2006,13 @@ export function mountViewerApp(root, session, options) {
                 freshRecords.arm();
                 freshRecordsReady = true;
             }
-            if ((synchronization === "synced" || synchronization === "incomplete") && !result.lastSynchronized)
+            if (synchronization === "synced" && !result.lastSynchronized)
                 statusMessage = "已同步";
             render();
             if (pushPending)
                 await pushScheduler.immediate();
+            if (generation !== syncGeneration)
+                return;
             if (tab === "list" || shell.layout === "regular" && tab === "home")
                 void searchRecords(recordsQuery);
             const nonRetryable = outcomes.some(item => ["offline", "rate-limited", "unauthorized", "forbidden", "partial", "cancelled"].includes(item.status));
@@ -1933,6 +2053,9 @@ export function mountViewerApp(root, session, options) {
             }
         }
         finally {
+            if (activeSyncOperation === operation)
+                activeSyncOperation = undefined;
+            operation.finish();
             historyRoundRunning = false;
             if (!disposed && (continueAfterRound || historyContinuationPending)) {
                 historyContinuationPending = false;
@@ -1943,7 +2066,7 @@ export function mountViewerApp(root, session, options) {
     function continueHistory() {
         if (disposed || historyTimer !== undefined)
             return;
-        if (historyRoundRunning || synchronization === "syncing") {
+        if (historyRoundRunning || activeSyncOperation?.current) {
             historyContinuationPending = true;
             return;
         }
@@ -1952,7 +2075,7 @@ export function mountViewerApp(root, session, options) {
             return;
         }
         // The next batch bypasses the foreground throttle like an explicit synchronization.
-        historyTimer = setTimeout(() => { historyTimer = undefined; void sync(true, false); }, 0);
+        historyTimer = setTimeout(() => { historyTimer = undefined; void sync(true, false, false, false); }, 0);
     }
     function onNetworkOnline() { void pushScheduler.immediate(); void sync(false, false, true).then(() => pushScheduler.immediate()); }
     const observesNetworkOnline = typeof window.addEventListener === "function";
@@ -1986,9 +2109,11 @@ export function mountViewerApp(root, session, options) {
         openTripSettings: showTripSheet, recordOrganizationActivity: () => companionActivity("happy"), recordNewEntryActivity: () => companionActivity("attention"), wakeCompanion,
         flushPush: () => pushScheduler.immediate(),
         dispose() { if (disposed)
-            return; disposed = true; pushScheduler.dispose(); unsubscribeChanges?.(); clearOpenedRecord(); freshRecords.reset(); unsubscribeLayout(); stopCompanionMotion(); if (observesVisibilityChange && typeof document.removeEventListener === "function")
+            return; disposed = true; syncGeneration++; activeSyncOperation?.abort(); for (const operation of activePushOperations)
+            operation.abort(); pushScheduler.dispose(); unsubscribeChanges?.(); clearOpenedRecord(); freshRecords.reset(); unsubscribeLayout(); stopCompanionMotion(); if (observesVisibilityChange && typeof document.removeEventListener === "function")
             document.removeEventListener("visibilitychange", onVisibilityChange); if (observesPageHide && typeof window.removeEventListener === "function")
-            window.removeEventListener("pagehide", pushOnLeave); clearTimeout(organizationTimer); clearTimeout(historyTimer); tripSheetOpen = false; refreshRevision++; recordsSearchRevision++; reports.dispose(); settingPages.dispose(); if (companionTimer !== undefined)
+            window.removeEventListener("pagehide", onPageHide); if (observesPageShow && typeof window.removeEventListener === "function")
+            window.removeEventListener("pageshow", onPageShow); clearTimeout(organizationTimer); clearTimeout(historyTimer); tripSheetOpen = false; refreshRevision++; recordsSearchRevision++; reports.dispose(); settingPages.dispose(); if (companionTimer !== undefined)
             clearTimeout(companionTimer); unsubscribe?.(); unsubscribeCleared?.(); if (observesNetworkOnline && typeof window.removeEventListener === "function")
             window.removeEventListener("online", onNetworkOnline); shell.dispose(); session.release(); } };
 }

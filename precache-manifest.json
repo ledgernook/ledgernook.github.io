@@ -1,5 +1,5 @@
 {
-  "buildId": "47d376d6ade826e0112d",
+  "buildId": "b9cd551e3d7aaae6378b",
   "localSchemaVersion": "1",
   "assets": [
     "./",
@@ -158,6 +158,7 @@
     "./src/ui/skins/nook.js",
     "./src/ui/states-model.js",
     "./src/ui/states.css",
+    "./src/ui/sync-operation.js",
     "./src/ui/sync-recovery-copy.js",
     "./src/ui/trip-sheet-view.js",
     "./src/ui/unrecorded-model.js",
@@ -167,7 +168,7 @@
     "./src/ui/viewer-app.js"
   ],
   "hashes": {
-    "./": "752d6829abf25098dcf6fbc62d30b90f53aa599601388d48b4ce1b0e17b0679b",
+    "./": "b1c67fc45189cd9af77a1bca4d5750fc6726525b130b4af90fe3af0c3fdf3441",
     "./assets/app-icon/apple-touch-icon-180.png": "d4cb815cc449ad33f9814a4528740af4be36ac4b9cfa553ad118a153bd6b9d8b",
     "./assets/app-icon/ledgernook-app-icon-1024.png": "178021e220b0dce11826edef94a60e8181bb798f6c2533d5c385b784959310c6",
     "./assets/app-icon/ledgernook-app-icon.svg": "44b2fdcee6699ff9eb671a9d47a246c73bf1e56afffa05e76ea91727a06ef254",
@@ -194,12 +195,12 @@
     "./assets/fonts/nunito-800-latin.woff2": "1cd61aea1e91cea27be21a62f51206cb08d616c3052e9d0222ed75bc45beb5cc",
     "./assets/fonts/nunito-LICENSE.txt": "40991bfa02ac620aae16dc527f3c47765a25e43f270d4c301ee6ab663a8d9015",
     "./assets/skins/nook.css": "778fbf67e3077f92e7fb3aa2ea6ee665f115df3b7229b8af7b7f1148938d8b5e",
-    "./build-info.js": "4dd011816e6a1a3246bd6cfdf3766ef11fa8ab4ed75dc4d7e8ce84545766b2ec",
-    "./index.html": "752d6829abf25098dcf6fbc62d30b90f53aa599601388d48b4ce1b0e17b0679b",
+    "./build-info.js": "af9c242bed3ee2313eca7c2a03f00e01baa6b6bf49515085d398a7afde694b53",
+    "./index.html": "b1c67fc45189cd9af77a1bca4d5750fc6726525b130b4af90fe3af0c3fdf3441",
     "./manifest.webmanifest": "1442bddc6309d799248456a28c747195eefd982fe04c461e20e58d5481a1b6e1",
-    "./service-worker.js": "c3c0db4208d9c6d929d469c99b16a6b804dc00b7081bb5c052b82d3cf3cec389",
+    "./service-worker.js": "3450feff42101752a43814256822e70b4f655b7306b9da7c04262ee188e86989",
     "./shortcuts/LedgerNook Writer.shortcut": "917f06a30f4321a4bd46c9297a06b7a705f5f3c9466ec645e47b555e88e40edd",
-    "./shortcuts/LedgerNook 整理分類.shortcut": "ba1c00bd80fbcd6d6afbe87558c399cd64575dbee6773bb35b1b0dc86a61f050",
+    "./shortcuts/LedgerNook 整理分類.shortcut": "fb3265645ecb306117f9a71ab5c0a90f3ea2a209d1fa3261253efb9b5aae1250",
     "./src/application/command-validation.js": "c2d63a80243d1688c4ab4691768cbedd7a044f4b7e7df7df20187197db758a27",
     "./src/application/commands.js": "4f0d32a9f5c000e887daf8070f4e3ff9dfe8f32d8265b4b23f9fa103b42d9018",
     "./src/application/companion.js": "6284b95dbaf4007f6eaac99c39573bafaae1c9df503299967793d276a96b9b0f",
@@ -323,12 +324,13 @@
     "./src/ui/skins/nook.js": "1a41b6632eb44e36927a08b49c693801e0fb018554985045fbba3c98b0494cc1",
     "./src/ui/states-model.js": "d94766204e0b3151d9d9a1646bd5a4efb1b1948a51bf4e5dae585aaf4f7f1b40",
     "./src/ui/states.css": "5d865accb20a1c0c175b2b44945bfebeb9fa69e51cbc2ff24ba6d5f0dd14e8f7",
+    "./src/ui/sync-operation.js": "cccf481b2167b28a524e319550592b364b9502b74a0d8a6a6db40dfd27223ecf",
     "./src/ui/sync-recovery-copy.js": "96fd855f76f2e5cf3cd95fb6d61be4378a3a2276a34a686bbf8d8308490683a8",
     "./src/ui/trip-sheet-view.js": "aca826203ff987586ee0ff73bc566469c1a905967c0e03490778f6771179bac9",
     "./src/ui/unrecorded-model.js": "06cab750b553e090eceffc5a0144185a96cfd3c6facbc0ffa16b22d6ad0301bb",
     "./src/ui/unrecorded-view.js": "fd8e69ab5d4b969eb3516307712d83da35b9a16a86631a6dc0fa0dacd550152b",
     "./src/ui/unrecorded.css": "fda0e688d35023de27eeded32477b9ca7f70ea6ff96b4675fa621fb8f4211b5e",
     "./src/ui/view.js": "35f4f07c42da8e36d61c0ddf5dea2495d9b5db9f0cb2231856bb2bf9c1467e83",
-    "./src/ui/viewer-app.js": "34faaa103874f1fb6ff6c480db64060951f37d09fd851a88c79c8e93861c28f6"
+    "./src/ui/viewer-app.js": "2f3c89badb71fceb5ae8aebf236cc5ce125b59c250590d5f7f114982e3921717"
   }
 }

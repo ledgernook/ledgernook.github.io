@@ -1,4 +1,4 @@
-const BUILD_ID = "47d376d6ade826e0112d";
+const BUILD_ID = "b9cd551e3d7aaae6378b";
 const LOCAL_SCHEMA_VERSION = "1";
 const CACHE_PREFIX = "ledgernook-public-"; // Mirrors PROGRAM_CACHE_PREFIX in src/browser/program-reset.ts.
 const CACHE_NAME = `${CACHE_PREFIX}${BUILD_ID}-schema-${LOCAL_SCHEMA_VERSION}`;
