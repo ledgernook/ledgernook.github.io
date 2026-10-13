@@ -1,0 +1,34 @@
+.lk-records-screen { display: flex; flex-direction: column; gap: 12px; }
+.lk-record-search-row { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.lk-record-search-field {
+  flex: 1; min-width: 0; height: 44px; padding: 0 6px 0 14px; border-radius: var(--r-card);
+  display: flex; align-items: center; gap: 8px; background: var(--card); border: var(--bd-card); box-shadow: var(--sh-card); color: var(--mute);
+}
+.lk-record-search-field > .lk-icon { flex: none; }
+.lk-record-search-field > input {
+  flex: 1; min-width: 0; padding: 0; border: 0; outline: none; background: transparent; color: var(--ink);
+  font: 400 16px var(--f-ui);
+}
+.lk-record-search-field > input::-webkit-search-cancel-button { display: none; }
+.lk-record-search-clear[hidden], .lk-record-search-count[hidden], .lk-record-search-notice[hidden] { display: none; }
+.lk-record-search-clear { flex: none; width: 32px; height: 32px; padding: 0; border: 0; border-radius: var(--r-pill); display: grid; place-items: center; background: var(--soft); color: var(--mute); }
+.lk-records-unclassified {
+  flex: none; height: 44px; padding: 0 14px 0 10px; border: 0; border-radius: var(--r-pill); display: flex; align-items: center; gap: 4px;
+  background: var(--card); color: var(--ink); font: 800 14px var(--f-num); font-variant-numeric: tabular-nums;
+}
+.lk-records-unclassified[aria-pressed="true"] { background: var(--sel-bg); color: var(--sel-fg); }
+.lk-record-search-count { padding: 0 4px; font: 700 13px var(--f-ui); font-variant-numeric: tabular-nums; }
+.lk-record-search-notice { display: flex; align-items: flex-start; gap: 8px; padding: 10px 14px; border-radius: var(--r-btn); background: var(--warn-bg); font: 400 12px/1.55 var(--f-ui); color: var(--ink); }
+.lk-record-search-notice > .lk-icon { flex: none; margin-top: 1px; }
+.lk-card.lk-search-empty { padding: 28px 20px; display: flex; flex-direction: column; align-items: center; gap: 8px; text-align: center; }
+.lk-search-empty > .lk-icon { color: var(--mute); }
+.lk-search-empty-text { font: 700 16px/1.3 var(--f-title); }
+.lk-records-more { display: block; align-self: center; width: fit-content; height: 48px; margin: 12px auto 0; padding: 0 22px; border: 0; border-radius: var(--r-pill); background: var(--soft); font: 700 15px var(--f-ui); }
+
+.lk-records-heading { min-height: 36px; }
+.lk-records-heading ~ #record-list-host { margin-top: 4px; }
+
+.lk-overview-records .lk-search-empty { padding: 40px 0; background: transparent; border: 0; box-shadow: none; }
+.lk-overview-records .lk-search-empty > .lk-icon { display: none; }
+.lk-overview-records .lk-search-empty-text { font: 400 15px var(--f-title); color: var(--mute); }
+.lk-overview-records .lk-record-search-count { display: none; }

@@ -1,0 +1,157 @@
+<!doctype html>
+<html lang="zh-Hant" data-skin="nook" data-appearance="system">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#f5efe4" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="LedgerNook" />
+    <meta name="application-name" content="LedgerNook" />
+    <title>LedgerNook</title>
+    <link rel="icon" href="data:," />
+    <link rel="apple-touch-icon" sizes="180x180" href="./assets/app-icon/apple-touch-icon-180.png" />
+    <link rel="manifest" href="./manifest.webmanifest" />
+    <link rel="preload" as="font" type="font/woff2" href="./assets/fonts/noto-sans-tc-400-ui.woff2" crossorigin />
+    <link rel="preload" as="font" type="font/woff2" href="./assets/fonts/noto-sans-tc-500-ui.woff2" crossorigin />
+    <link rel="preload" as="font" type="font/woff2" href="./assets/fonts/noto-sans-tc-700-ui.woff2" crossorigin />
+    <link rel="preload" as="font" type="font/woff2" href="./assets/fonts/lxgw-wenkai-tc-700-ui.woff2" crossorigin />
+    <link rel="preload" as="font" type="font/woff2" href="./assets/fonts/nunito-800-latin.woff2" crossorigin />
+    <link rel="preload" as="font" type="font/woff2" href="./assets/fonts/material-symbols-rounded.woff2" crossorigin />
+    <link rel="stylesheet" href="./assets/fonts/fonts.css" />
+    <link rel="stylesheet" href="./assets/skins/nook.css" />
+    <link rel="stylesheet" href="./src/ui/layout/layout.css" />
+    <link rel="stylesheet" href="./src/ui/components.css" />
+    <link rel="stylesheet" href="./src/ui/shared-controls.css" />
+    <link rel="stylesheet" href="./src/ui/overview.css" />
+    <link rel="stylesheet" href="./src/ui/unrecorded.css" />
+    <link rel="stylesheet" href="./src/ui/manual-entry.css" />
+    <link rel="stylesheet" href="./src/ui/record-sheet.css" />
+    <link rel="stylesheet" href="./src/ui/states.css" />
+    <link rel="stylesheet" href="./src/ui/records.css" />
+    <link rel="stylesheet" href="./src/ui/settings.css" />
+    <link rel="stylesheet" href="./src/ui/projects.css" />
+    <link rel="stylesheet" href="./src/ui/connection.css" />
+    <link rel="stylesheet" href="./src/ui/report.css" />
+    <script src="./build-info.js"></script>
+    <link rel="modulepreload" href="./src/application/command-validation.js" />
+    <link rel="modulepreload" href="./src/application/commands.js" />
+    <link rel="modulepreload" href="./src/application/companion.js" />
+    <link rel="modulepreload" href="./src/application/connection-capability.js" />
+    <link rel="modulepreload" href="./src/application/connection-retention.js" />
+    <link rel="modulepreload" href="./src/application/index.js" />
+    <link rel="modulepreload" href="./src/application/local-ledger.js" />
+    <link rel="modulepreload" href="./src/application/outbox.js" />
+    <link rel="modulepreload" href="./src/application/ports.js" />
+    <link rel="modulepreload" href="./src/application/preferences.js" />
+    <link rel="modulepreload" href="./src/application/push.js" />
+    <link rel="modulepreload" href="./src/application/query.js" />
+    <link rel="modulepreload" href="./src/application/record-actions.js" />
+    <link rel="modulepreload" href="./src/application/replay.js" />
+    <link rel="modulepreload" href="./src/application/repository-connection.js" />
+    <link rel="modulepreload" href="./src/application/sync.js" />
+    <link rel="modulepreload" href="./src/application/viewer-query.js" />
+    <link rel="modulepreload" href="./src/banks/index.js" />
+    <link rel="modulepreload" href="./src/browser/app-main.js" />
+    <link rel="modulepreload" href="./src/browser/appearance.js" />
+    <link rel="modulepreload" href="./src/browser/connection-retention.js" />
+    <link rel="modulepreload" href="./src/browser/device-ledger-store.js" />
+    <link rel="modulepreload" href="./src/browser/device-presentation.js" />
+    <link rel="modulepreload" href="./src/browser/monthly-connection.js" />
+    <link rel="modulepreload" href="./src/browser/monthly-demo.js" />
+    <link rel="modulepreload" href="./src/browser/page-lifecycle.js" />
+    <link rel="modulepreload" href="./src/browser/program-reset.js" />
+    <link rel="modulepreload" href="./src/browser/project-sort-setting.js" />
+    <link rel="modulepreload" href="./src/browser/remembered-connection.js" />
+    <link rel="modulepreload" href="./src/browser/report-chart-setting.js" />
+    <link rel="modulepreload" href="./src/browser/service-worker.js" />
+    <link rel="modulepreload" href="./src/browser/snapshot-publication.js" />
+    <link rel="modulepreload" href="./src/browser/unrecorded-reader.js" />
+    <link rel="modulepreload" href="./src/core/calendar.js" />
+    <link rel="modulepreload" href="./src/core/category-icons.js" />
+    <link rel="modulepreload" href="./src/core/event.js" />
+    <link rel="modulepreload" href="./src/core/index.js" />
+    <link rel="modulepreload" href="./src/core/installments.js" />
+    <link rel="modulepreload" href="./src/core/money.js" />
+    <link rel="modulepreload" href="./src/core/overview.js" />
+    <link rel="modulepreload" href="./src/core/preferences.js" />
+    <link rel="modulepreload" href="./src/core/records.js" />
+    <link rel="modulepreload" href="./src/core/recurring.js" />
+    <link rel="modulepreload" href="./src/core/report.js" />
+    <link rel="modulepreload" href="./src/core/rule-operations.js" />
+    <link rel="modulepreload" href="./src/core/rules.js" />
+    <link rel="modulepreload" href="./src/core/splits.js" />
+    <link rel="modulepreload" href="./src/core/unrecorded.js" />
+    <link rel="modulepreload" href="./src/core/validation.js" />
+    <link rel="modulepreload" href="./src/core/valuation.js" />
+    <link rel="modulepreload" href="./src/fx/frankfurter.js" />
+    <link rel="modulepreload" href="./src/local/index.js" />
+    <link rel="modulepreload" href="./src/local/memory.js" />
+    <link rel="modulepreload" href="./src/local/outbox.js" />
+    <link rel="modulepreload" href="./src/storage/incremental.js" />
+    <link rel="modulepreload" href="./src/storage/mutation.js" />
+    <link rel="modulepreload" href="./src/storage/repositories.js" />
+    <link rel="modulepreload" href="./src/ui/category-presentation.js" />
+    <link rel="modulepreload" href="./src/ui/command-result-model.js" />
+    <link rel="modulepreload" href="./src/ui/connection-model.js" />
+    <link rel="modulepreload" href="./src/ui/connection-view.js" />
+    <link rel="modulepreload" href="./src/ui/csv.js" />
+    <link rel="modulepreload" href="./src/ui/currency-picker-model.js" />
+    <link rel="modulepreload" href="./src/ui/currency-picker-view.js" />
+    <link rel="modulepreload" href="./src/ui/date-picker-model.js" />
+    <link rel="modulepreload" href="./src/ui/date-picker-view.js" />
+    <link rel="modulepreload" href="./src/ui/dom.js" />
+    <link rel="modulepreload" href="./src/ui/format.js" />
+    <link rel="modulepreload" href="./src/ui/history-coverage-model.js" />
+    <link rel="modulepreload" href="./src/ui/icons.js" />
+    <link rel="modulepreload" href="./src/ui/layout/app-shell.js" />
+    <link rel="modulepreload" href="./src/ui/layout/arrangement.js" />
+    <link rel="modulepreload" href="./src/ui/layout/edge-swipe.js" />
+    <link rel="modulepreload" href="./src/ui/layout/sheet-swipe.js" />
+    <link rel="modulepreload" href="./src/ui/layout/width-class.js" />
+    <link rel="modulepreload" href="./src/ui/ledger-format.js" />
+    <link rel="modulepreload" href="./src/ui/manual-entry-model.js" />
+    <link rel="modulepreload" href="./src/ui/manual-entry-view.js" />
+    <link rel="modulepreload" href="./src/ui/method-spending-model.js" />
+    <link rel="modulepreload" href="./src/ui/method-spending-view.js" />
+    <link rel="modulepreload" href="./src/ui/overview-model.js" />
+    <link rel="modulepreload" href="./src/ui/overview-view.js" />
+    <link rel="modulepreload" href="./src/ui/payment-method-name.js" />
+    <link rel="modulepreload" href="./src/ui/payment-method-reorder.js" />
+    <link rel="modulepreload" href="./src/ui/projects-model.js" />
+    <link rel="modulepreload" href="./src/ui/projects-view.js" />
+    <link rel="modulepreload" href="./src/ui/push-scheduler.js" />
+    <link rel="modulepreload" href="./src/ui/readonly-reason-view.js" />
+    <link rel="modulepreload" href="./src/ui/record-action-controller.js" />
+    <link rel="modulepreload" href="./src/ui/record-action-model.js" />
+    <link rel="modulepreload" href="./src/ui/record-action-view.js" />
+    <link rel="modulepreload" href="./src/ui/record-detail-view.js" />
+    <link rel="modulepreload" href="./src/ui/record-list-model.js" />
+    <link rel="modulepreload" href="./src/ui/record-sheet-model.js" />
+    <link rel="modulepreload" href="./src/ui/record-sheet-view.js" />
+    <link rel="modulepreload" href="./src/ui/records-model.js" />
+    <link rel="modulepreload" href="./src/ui/records-view.js" />
+    <link rel="modulepreload" href="./src/ui/report-feature.js" />
+    <link rel="modulepreload" href="./src/ui/report-model.js" />
+    <link rel="modulepreload" href="./src/ui/report-period-model.js" />
+    <link rel="modulepreload" href="./src/ui/report-period-view.js" />
+    <link rel="modulepreload" href="./src/ui/report-view.js" />
+    <link rel="modulepreload" href="./src/ui/screen-date-format.js" />
+    <link rel="modulepreload" href="./src/ui/settings-feature.js" />
+    <link rel="modulepreload" href="./src/ui/settings-flags.js" />
+    <link rel="modulepreload" href="./src/ui/settings-model.js" />
+    <link rel="modulepreload" href="./src/ui/settings-pages-view.js" />
+    <link rel="modulepreload" href="./src/ui/settings-view.js" />
+    <link rel="modulepreload" href="./src/ui/shared-controls.js" />
+    <link rel="modulepreload" href="./src/ui/skins/nook.js" />
+    <link rel="modulepreload" href="./src/ui/states-model.js" />
+    <link rel="modulepreload" href="./src/ui/sync-recovery-copy.js" />
+    <link rel="modulepreload" href="./src/ui/trip-sheet-view.js" />
+    <link rel="modulepreload" href="./src/ui/unrecorded-model.js" />
+    <link rel="modulepreload" href="./src/ui/unrecorded-view.js" />
+    <link rel="modulepreload" href="./src/ui/view.js" />
+    <link rel="modulepreload" href="./src/ui/viewer-app.js" />
+    <script type="module" src="./src/browser/app-main.js"></script>
+  </head>
+  <body><div id="app"></div></body>
+</html>

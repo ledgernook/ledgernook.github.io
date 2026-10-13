@@ -1,0 +1,6 @@
+.lk-readonly-reason { display: flex; flex-direction: column; gap: 14px; }
+.lk-readonly-copy, .lk-readonly-result { margin: 0; font: 400 14px/1.7 var(--f-ui); }
+.lk-readonly-result { color: var(--mute); font-size: 12px; }
+.lk-readonly-recheck { min-height: 50px; }
+.lk-unconverted { color: var(--mute); }
+.lk-record-row .lk-unconverted { color: var(--mute); }

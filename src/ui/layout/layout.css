@@ -1,0 +1,117 @@
+/* Viewport and safe-area arrangement lives only in this layout layer. */
+html, body { margin: 0; min-height: 100%; overflow: clip; background: var(--bg); }
+body { height: 100dvh; }
+/* A Home Screen web app can launch with dvh at the small viewport (screen minus the top inset); vh is the full screen there. */
+@media (display-mode: standalone) { html, body { height: 100vh; min-height: 100vh; } }
+#app { height: 100%; }
+.lk-app-shell {
+  position: relative; height: 100%; width: 100%; margin-inline: auto;
+  background: var(--bg); container-type: inline-size;
+  --content-top: calc(var(--safe-top) + var(--top-band));
+  --page-bottom: 120px;
+  --safe-top: var(--capture-safe-top, env(safe-area-inset-top, 0px));
+  --safe-bottom: var(--capture-safe-bottom, env(safe-area-inset-bottom, 0px));
+  --safe-left: var(--capture-safe-left, env(safe-area-inset-left, 0px));
+  --safe-right: var(--capture-safe-right, env(safe-area-inset-right, 0px));
+}
+.lk-shell-background { height: 100%; padding-top: var(--content-top); display: flex; flex-direction: column; }
+.lk-app-shell[data-status-shelf="true"] { --page-bottom: 168px; }
+.lk-save-failure-banner { flex: none; margin: 4px 12px 2px; min-height: 38px; padding: 0 12px; border-radius: var(--r-pill); background: var(--warn-bg); display: flex; align-items: center; gap: 5px; font: 500 13px var(--f-ui); }
+.lk-save-failure-banner[hidden] { display: none; }
+.lk-content { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: none; padding: var(--space-6) calc(var(--space-18) + var(--safe-right)) var(--page-bottom) calc(var(--space-18) + var(--safe-left)); }
+.lk-navigation-host { position: absolute; bottom: max(24px, calc(var(--safe-bottom) - 10px)); left: calc(var(--space-16) + var(--safe-left)); right: calc(var(--space-16) + var(--safe-right)); z-index: 30; }
+.lk-sheet-host { position: absolute; inset: 0; z-index: 40; display: flex; flex-direction: column; justify-content: flex-end; }
+.lk-sheet-host[hidden] { display: none; }
+.lk-sheet-layer { position: absolute; inset: 0; display: flex; flex-direction: column; justify-content: flex-end; }
+.lk-app-toast { position: absolute; top: calc(var(--content-top) + 14px); left: 50%; transform: translateX(-50%); z-index: 60; max-width: calc(100% - 36px); padding: 10px 18px; border-radius: var(--r-pill); background: var(--ink); color: var(--bg); font: 500 13px var(--f-ui); }
+.lk-sheet { max-height: calc(100% - var(--content-top) - 8px); overflow-y: auto; overscroll-behavior: contain; scrollbar-width: none; padding-bottom: max(40px, var(--safe-bottom)); padding-left: calc(20px + var(--safe-left)); padding-right: calc(20px + var(--safe-right)); }
+/* Reserve vertical chrome drags; content keeps native scrolling and pinch zoom. */
+.lk-sheet-host[data-presentation="sheet"] :is(.lk-sheet-handle, [data-sheet-header]) { touch-action: pan-x pinch-zoom; }
+/* Keep lkUp from restarting after a gesture; nothing changes at initial rest. */
+.lk-sheet-host[data-presentation="sheet"] .lk-sheet[data-swipe-state] { animation: none; }
+.lk-sheet-host[data-presentation="sheet"] .lk-sheet[data-swipe-state="dragging"] { transition: none; }
+.lk-sheet-host[data-presentation="sheet"] .lk-sheet[data-swipe-state="returning"] { transition: transform var(--motion-sheet); }
+.lk-connection-content { position: absolute; inset: var(--content-top) var(--safe-right) 0 var(--safe-left); overflow-y: auto; overscroll-behavior: contain; scrollbar-width: none; padding: 6px 22px max(48px, var(--safe-bottom)); }
+.lk-connection-content:has(.lk-welcome) { padding: 6px 26px max(48px, var(--safe-bottom)); }
+@media (orientation: landscape), (min-width: 441px) {
+  .lk-app-shell:not([data-layout]), .lk-app-shell[data-layout="phone"] { max-width: 414px; }
+}
+
+/* iPad chrome and arrangements. Phone declarations above retain their outcome. */
+.lk-app-shell:is([data-layout="narrow"], [data-layout="compact"], [data-layout="regular"]) {
+  --safe-top: var(--capture-safe-top, max(24px, env(safe-area-inset-top, 0px)));
+}
+.lk-app-shell[data-layout="regular"] .lk-navigation-host { left: 16px; right: auto; width: 384px; bottom: 24px; z-index: 50; }
+.lk-app-shell:is([data-layout="narrow"], [data-layout="compact"]) .lk-navigation-host { left: 50%; right: auto; width: 384px; bottom: 24px; transform: translateX(-50%); z-index: 50; }
+.lk-app-shell[data-layout="regular"] .lk-app-toast { left: 16px; width: 384px; max-width: none; transform: none; text-align: center; }
+.lk-app-shell:is([data-layout="narrow"], [data-layout="compact"]) .lk-app-toast { left: 50%; width: 384px; max-width: none; transform: translateX(-50%); text-align: center; }
+.lk-app-shell:not([data-layout="phone"])[data-layout] .lk-content { padding: 6px 18px var(--page-bottom); }
+.lk-content[data-split="true"] { display: grid; grid-template-columns: 416px minmax(0,1fr); overflow: hidden; padding: 0 !important; }
+.lk-content[data-split="true"][data-arrangement="records"] { grid-template-columns: minmax(0,1fr) 400px; }
+.lk-content[data-split="true"] > [data-layout-parts="true"] { display: contents; }
+.lk-layout-primary, .lk-layout-secondary { min-width: 0; min-height: 0; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: none; display: flex; flex-direction: column; gap: 16px; }
+.lk-layout-primary > *, .lk-layout-secondary > * { flex-shrink: 0; }
+.lk-layout-primary { padding: 6px 18px var(--page-bottom); }
+.lk-layout-secondary { padding: 6px 18px 24px 0; }
+.lk-overview-records .lk-layout-secondary > .lk-records-screen { flex: 1; min-height: 0; }
+.lk-overview-records .lk-records-screen > :not(#record-list-host) { flex: none; }
+.lk-overview-records #record-list-host { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: none; }
+.lk-overview-records .lk-layout-primary:has(.lk-record-detail) { overflow: hidden; padding-bottom: calc(var(--page-bottom) - 22px); }
+.lk-overview-records .lk-layout-primary > .lk-record-detail { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: none; }
+.lk-app-shell:not([data-layout="phone"])[data-layout] .lk-overview-summary {
+  grid-template-columns: minmax(0,320px) 150px; justify-content: space-between; column-gap: 10px; align-items: end;
+}
+.lk-app-shell:not([data-layout="phone"])[data-layout] .lk-overview-totals { grid-column: 1; }
+.lk-app-shell[data-layout="regular"] .lk-overview-summary { grid-template-columns: minmax(0,1fr) 150px; column-gap: 14px; }
+.lk-app-shell:not([data-layout="phone"])[data-layout] .lk-overview .lk-scene-host { grid-column: 2; width: 150px; }
+.lk-app-shell:not([data-layout="phone"])[data-layout] .lk-overview > .lk-notice,
+.lk-app-shell:not([data-layout="phone"])[data-layout] .lk-layout-primary > .lk-notice { order: -1; }
+.lk-content[data-arrangement="columns"][data-split="true"] .lk-layout-secondary > .lk-overview-recent { flex: 1; min-height: 0; }
+.lk-content[data-arrangement="columns"][data-split="true"] .lk-overview-recent > .lk-record-list {
+  flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: none;
+}
+.lk-content[data-arrangement="columns"][data-split="true"] .lk-overview-recent > .lk-overview-empty { flex: 1; min-height: 0; }
+.lk-app-shell[data-layout="regular"] .lk-content[data-arrangement="records"] .lk-records-screen { height: 100%; min-height: 0; }
+.lk-app-shell[data-layout="regular"] .lk-content[data-arrangement="records"] .lk-records-screen > :not(#record-list-host) { flex: none; }
+.lk-app-shell[data-layout="regular"] .lk-content[data-arrangement="records"] #record-list-host { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.lk-app-shell[data-layout="regular"] .lk-content[data-arrangement="records"] #record-list-host > .lk-record-list { min-height: 0; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: none; }
+/* Keep the grid track reserved while its page is replaced by a docked card. */
+.lk-layout-secondary[hidden] { display: block; visibility: hidden; }
+.lk-app-shell:not([data-layout="phone"])[data-layout][data-active-tab="add"] .lk-save-failure-banner { width: 392px; }
+.lk-app-shell:not([data-layout="phone"])[data-layout] .lk-content[data-arrangement="entry"]:not([data-split="true"]) { flex: none; width: 416px; height: calc(100% - var(--content-top)); }
+.lk-record-row[data-open="true"] { background: var(--soft); }
+.lk-page-row[data-open="true"] { background: var(--soft); }
+.lk-page-back[hidden] { display: none; }
+.lk-edge-underlay { position: absolute; z-index: 1; overflow: hidden; pointer-events: none; background: var(--bg); }
+.lk-app-shell:has([data-edge-swipe-state]) { overflow: clip; }
+.lk-edge-snapshot { position: absolute !important; inset: 0 !important; margin: 0 !important; width: 100% !important; height: 100% !important; min-height: 0 !important; }
+.lk-edge-snapshot, .lk-edge-snapshot * { animation: none !important; transition: none !important; }
+.lk-edge-dim { position: absolute; inset: 0; background: #000; pointer-events: none; }
+[data-edge-swipe-state="dragging"] { transition: none; }
+[data-edge-swipe-state="returning"], [data-edge-swipe-state="committing"] { transition: transform var(--motion-sheet), clip-path var(--motion-sheet); }
+.lk-edge-underlay[data-edge-swipe-state="settling"] .lk-edge-snapshot { transition: transform var(--motion-sheet) !important; }
+.lk-edge-underlay[data-edge-swipe-state="settling"] .lk-edge-dim { transition: opacity var(--motion-sheet); }
+@media (prefers-reduced-motion: reduce) {
+  [data-edge-swipe-state], .lk-edge-underlay * { transition: none !important; }
+}
+.lk-connection-shell:not([data-layout="phone"])[data-layout] { max-width: 440px; }
+
+.lk-sheet-host[data-presentation="panel"] { inset: calc(var(--content-top) + 6px) 0 0 416px; display: block; }
+.lk-app-shell[data-panel-arrangement="records"] .lk-sheet-host[data-presentation="panel"] { left: auto; width: 400px; }
+.lk-sheet-host[data-presentation="panel"] .lk-sheet-layer { inset: 0 18px 24px 0; display: block; overflow-y: auto; scrollbar-width: none; }
+.lk-sheet-host[data-presentation="panel"] .lk-scrim { display: none; }
+.lk-sheet-host[data-presentation="panel"] .lk-sheet { max-height: none; border-radius: var(--r-card); box-shadow: none; animation: none; padding: 16px 20px 28px; }
+.lk-sheet-host[data-presentation="panel"] .lk-unrecorded[data-surface="sheet"] { margin: -4px -20px -14px; }
+.lk-sheet-host:is([data-presentation="panel"], [data-presentation="drawer"]) .lk-sheet-handle { display: none; }
+.lk-sheet-host:is([data-presentation="panel"], [data-presentation="drawer"]) .lk-sheet-layer[hidden] { display: none; }
+.lk-sheet-host[data-presentation="drawer"] { inset: calc(var(--content-top) + 6px) 0 0; display: block; overflow: hidden; }
+.lk-sheet-host[data-presentation="drawer"] .lk-sheet { position: absolute; top: 0; right: 0; bottom: 0; width: var(--drawer-width); max-height: none; border-radius: 30px 0 0 30px; box-shadow: -10px 0 30px -12px rgba(60,40,20,.25); padding: 16px 20px 28px; animation: lkSide var(--motion-sheet); }
+.lk-sheet-host[data-presentation="drawer"] .lk-scrim { animation: lkFade .2s; }
+.lk-app-shell:not([data-layout="phone"])[data-layout] .lk-sheet-host[data-presentation="sheet"] { z-index: 55; }
+.lk-sheet-host[hidden] { display: none; }
+/* On phone, page content scrolls up into the top band and fades out across it; at rest the band stays empty. */
+.lk-app-shell:is(:not([data-layout]), [data-layout="phone"]) .lk-content {
+  margin-top: calc(-1 * var(--top-band)); padding-top: calc(var(--top-band) + var(--space-6));
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 var(--top-band));
+  mask-image: linear-gradient(to bottom, transparent 0, #000 var(--top-band));
+}
