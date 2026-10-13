@@ -1,5 +1,5 @@
 {
-  "buildId": "28ab45d04b1e4f46ea03",
+  "buildId": "3f2770a94be7845cb768",
   "localSchemaVersion": "1",
   "assets": [
     "./",
@@ -195,12 +195,12 @@
     "./assets/fonts/nunito-800-latin.woff2": "1cd61aea1e91cea27be21a62f51206cb08d616c3052e9d0222ed75bc45beb5cc",
     "./assets/fonts/nunito-LICENSE.txt": "40991bfa02ac620aae16dc527f3c47765a25e43f270d4c301ee6ab663a8d9015",
     "./assets/skins/nook.css": "778fbf67e3077f92e7fb3aa2ea6ee665f115df3b7229b8af7b7f1148938d8b5e",
-    "./build-info.js": "464a8cd1841b5f65e2fc221c647b09891e33c09f57ad8d0ad3367d64bd345a4e",
+    "./build-info.js": "7bda681141dcb509a825a47f11e887019d050f1796df785bd814b36775b274f3",
     "./index.html": "b1c67fc45189cd9af77a1bca4d5750fc6726525b130b4af90fe3af0c3fdf3441",
     "./manifest.webmanifest": "1442bddc6309d799248456a28c747195eefd982fe04c461e20e58d5481a1b6e1",
-    "./service-worker.js": "cfc9182a96d6400b3b9a419f6e47d5369b03902bb431ccd3e2b743c7cd949ec7",
-    "./shortcuts/LedgerNook Writer.shortcut": "917f06a30f4321a4bd46c9297a06b7a705f5f3c9466ec645e47b555e88e40edd",
-    "./shortcuts/LedgerNook 整理分類.shortcut": "246c6d203f00512d4d006828dfcb2896232accd8149feacbebccb780f89e6358",
+    "./service-worker.js": "2854647de3e016c09f80ea6830c68a323f4a9de5dd9113d807cf74ffb57df84c",
+    "./shortcuts/LedgerNook Writer.shortcut": "865463501c1c4c242e3ba3cc7ceb12ed30751baa6a778db6850fa32764f88a75",
+    "./shortcuts/LedgerNook 整理分類.shortcut": "f9737cb41066932e1611506baa1414349a2b28adba28dde0a6cb5e7a57490746",
     "./src/application/command-validation.js": "c2d63a80243d1688c4ab4691768cbedd7a044f4b7e7df7df20187197db758a27",
     "./src/application/commands.js": "4f0d32a9f5c000e887daf8070f4e3ff9dfe8f32d8265b4b23f9fa103b42d9018",
     "./src/application/companion.js": "6284b95dbaf4007f6eaac99c39573bafaae1c9df503299967793d276a96b9b0f",
