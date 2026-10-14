@@ -1,10 +1,13 @@
+import { twdEntryField } from "./twd-entry-view.js";
+import { referenceRateRow } from "./record-sheet-model.js";
+import { displayAmount } from "./ledger-format.js";
+import { amountEntryField, amountEntryKeypad } from "./amount-entry-view.js";
 import { categoryPresentation } from "./category-presentation.js";
-import { manualCommand, manualDateLabel } from "./manual-entry-model.js";
+import { canSaveManualDraft, manualTwdPreview, manualDateLabel } from "./manual-entry-model.js";
 import { shiftDate } from "./ledger-format.js";
-import { currencyScale } from "../core/index.js";
 import { el } from "./dom.js";
 import { icon, saveCheckIcon } from "./icons.js";
-import { button, categoryBadge, nativeDateInput, segments, writingIndicator } from "./shared-controls.js";
+import { button, categoryBadge, nativeDateInput, segments } from "./shared-controls.js";
 import { readOnlyReasonCopy } from "./readonly-reason-view.js";
 export function manualEntryView(draft, categories, picker, today, state, actions, earliest = today) {
     const element = el("div", undefined, "lk-manual-entry lk-feature-view");
@@ -27,19 +30,17 @@ export function manualEntryView(draft, categories, picker, today, state, actions
         source.append(icon("notification_important", 17), el("span", draft.notification.merchant ?? draft.notification.source), el("span", draft.notification.meta, "lk-number"));
         element.append(source);
     }
-    const amount = el("div", undefined, "lk-entry-amount");
-    const currency = button(draft.currency, actions.currency, "lk-currency lk-number");
-    currency.setAttribute("aria-label", "幣別");
-    const value = el("input", undefined, "lk-entry-value lk-number");
-    value.type = "text";
-    value.inputMode = "none";
-    value.readOnly = true;
-    value.setAttribute("aria-label", "金額");
-    const [whole, fraction] = draft.amount.split(".");
-    value.value = `${Number(whole || 0).toLocaleString("en-US")}${draft.amount.includes(".") ? `.${fraction ?? ""}` : ""}`;
-    value.dataset.zero = String(!Number(draft.amount));
-    amount.append(currency, value, el("span", undefined, "lk-entry-caret"));
+    const focus = state.amountFocus ?? "amount", amount = amountEntryField(draft.amount, draft.currency, actions.currency);
+    if (focus !== "amount")
+        amount.classList.add("lk-entry-unfocused");
+    amount.querySelector("input")?.addEventListener("click", () => actions.focus?.("amount"));
     element.append(amount);
+    if (draft.currency !== "TWD") {
+        element.classList.add("lk-manual-foreign");
+        const own = draft.actualTwdAmount !== undefined, preview = manualTwdPreview(draft), row = draft.quote ? referenceRateRow(draft.quote) : null;
+        const value = own ? Number(draft.actualTwdAmount || 0).toLocaleString("en-US") : preview === null ? "—" : displayAmount(preview);
+        element.append(twdEntryField(value, own ? "自填" : row?.kind === "rate" ? `參考 ${row.rate}` : "", own, focus === "twd", !!state.quotePending, () => actions.focus?.("twd"), () => actions.restore?.(), true));
+    }
     const grid = el("div", undefined, "lk-entry-categories");
     for (const category of categories.filter(item => item.parentId === undefined)) {
         const selected = draft.categoryId === category.id || categories.find(item => item.id === draft.categoryId)?.parentId === category.id;
@@ -91,26 +92,7 @@ export function manualEntryView(draft, categories, picker, today, state, actions
     project.append(icon("luggage", 18), el("span", draft.projectId ? state.projectLabel ?? "專案" : "專案"));
     extra.append(project);
     element.append(extra);
-    const keypad = el("div", undefined, "lk-keypad");
-    const remove = button("", () => actions.key("delete"), "lk-key lk-key-delete");
-    remove.setAttribute("aria-label", "刪除");
-    remove.append(icon("backspace", 22));
-    const save = button("", actions.save, "lk-key lk-key-save");
-    const saveLabel = state.saveState === "saving" ? "寫入中" : state.saveState === "failed" ? "重試" : "記一筆";
-    save.setAttribute("aria-label", saveLabel);
-    save.dataset.state = state.saveState;
-    save.disabled = state.saveState === "saving" || !draft.paymentMethodId || manualCommand(draft).input.amountMinor === 0;
-    save.append(state.saveState === "saving" ? writingIndicator(44) : state.saveState === "failed" ? icon("refresh", 44) : saveCheckIcon());
-    keypad.append(remove, save);
-    for (const key of ["1", "2", "3", "4", "5", "6", "7", "8", "9", draft.currency !== "TWD" && currencyScale(draft.currency) ? "." : "", "0", ""]) {
-        const node = button(key, () => actions.key(key), "lk-key");
-        if (!key) {
-            node.style.visibility = "hidden";
-            node.tabIndex = -1;
-        }
-        keypad.append(node);
-    }
-    element.append(keypad);
+    element.append(amountEntryKeypad(focus === "twd" ? "TWD" : draft.currency, state.saveState, !state.quotePending && canSaveManualDraft(draft), actions.key, actions.save));
     if (state.locked || state.saveState === "saving")
         element.querySelectorAll("button:not(.lk-key-save)").forEach(control => { control.disabled = true; });
     return { element };

@@ -1,7 +1,7 @@
 import { localDateOf } from "./calendar.js";
 import { RecurringRuleError, resolveRecurringSchedule, validateRecurringRule } from "./recurring.js";
 import { NOTIFICATION_BANKS, paymentMethodName, PREFERENCES_PATH, validateLedgerPreferences } from "./preferences.js";
-import { DESCRIPTION_LIMIT, eventOccurrence, eventPartition, ledgerEventsEqual, MERCHANT_LIMIT, PAYMENT_METHOD_LIMIT, validateLedgerEvent, } from "./event.js";
+import { DESCRIPTION_LIMIT, eventOccurrence, eventPartition, ledgerEventsEqual, MERCHANT_LIMIT, PAYMENT_METHOD_LIMIT, validateLedgerEvent, sourceTwdValue, } from "./event.js";
 import { allocationCreditMinor, InstallmentPlanError, resolveInstallmentSchedule, validateInstallmentPlan, validateRefundAllocation, } from "./installments.js";
 import { addMinor, isCurrencyCode } from "./money.js";
 import { validateRecordSplit } from "./splits.js";
@@ -607,7 +607,7 @@ function baseRecord(source, details, rules, ai, gap, preferences) {
     const merchant = correction?.merchant ?? source.merchant;
     const description = correction?.description ?? source.description;
     const unchangedMoney = amountMinor === source.amountMinor && currency === source.currency;
-    const stated = unchangedMoney ? source.statedTwdEquivalent : undefined;
+    const stated = sourceTwdValue(source, currency);
     // A valuation applies only to the money it converted; a later amount/currency correction leaves it unapplied.
     let valuation = null;
     if (details?.valuation !== undefined) {
@@ -616,12 +616,15 @@ function baseRecord(source, details, rules, ai, gap, preferences) {
         else
             gap("valuation-mismatch", source.id);
     }
-    // Precedence: native TWD, explicit saved valuation, confirmed stated actual; an approximate equivalent never counts.
+    // Source values apply unscaled. Amount follows save the applied pair and its provenance.
+    const statedOrigin = valuation?.basis === "actual" ? valuation.origin?.source : undefined;
     const reportingValue = currency === "TWD"
         ? Object.freeze({ amountMinor, basis: "native", estimated: false })
         : valuation !== null
-            ? Object.freeze({ amountMinor: valuation.twdMinor, basis: valuation.basis === "actual" ? "saved-actual" : "saved-rate", estimated: valuation.basis !== "actual" })
-            : stated?.basis === "actual" ? Object.freeze({ amountMinor: stated.amountMinor, basis: "stated-actual", estimated: false }) : null;
+            ? Object.freeze({ amountMinor: valuation.twdMinor, basis: valuation.basis === "actual" ? statedOrigin ?? "saved-actual" : "saved-rate",
+                estimated: valuation.basis !== "actual" || statedOrigin === "stated-approximate" })
+            : stated ? Object.freeze({ amountMinor: stated.amountMinor,
+                basis: stated.basis === "actual" ? "stated-actual" : "stated-approximate", estimated: stated.basis === "approximate" }) : null;
     let installment = null;
     const plan = details?.installmentPlan;
     if (plan !== undefined) {

@@ -1,13 +1,13 @@
 import { categoryPresentation } from "./category-presentation.js";
-import { displayAmount, recordDate, timeLabel } from "./ledger-format.js";
+import { displayAmount, recordDate } from "./ledger-format.js";
 import { recordRow } from "./record-list-model.js";
 import { screenDateFormatter } from "./screen-date-format.js";
 import { el } from "./dom.js";
 import { icon, iconButton } from "./icons.js";
-import { recordPaymentMethodName } from "./payment-method-name.js";
 import { aiPendingNotice, button, categoryBadge, notice, recordSyncNotice } from "./shared-controls.js";
-import { classificationSource, paymentMethodRevision, recordActionItems, recordMoney, recurringRuleLine, valuationLabel } from "./record-sheet-model.js";
-export function recordSheetView(record, result, writable, actions) {
+import { recordFieldsView } from "./record-fields-view.js";
+import { capturedRecordMeta, classificationSource, paymentMethodRevision, recordChipItems, recordFieldItems, recordMoney, valuationLabel } from "./record-sheet-model.js";
+export function recordSheetView(record, result, writable, actions, today = result.asOf) {
     const row = recordRow(record, result, writable);
     const sessionWritable = writable;
     writable = writable && row.syncState !== "failed";
@@ -23,11 +23,18 @@ export function recordSheetView(record, result, writable, actions) {
     const title = el("div", undefined, "lk-record-title");
     title.append(el("h2", row.title));
     const amount = recordMoney(record);
-    const money = el("div", undefined, `lk-record-amount${record.reportingValue ? "" : " lk-money-missing"}`);
+    const money = el("div", undefined, "lk-record-amount");
+    if (amount.approximate)
+        money.append(el("span", "約", "lk-record-approx"));
     money.append(el("span", amount.amount, `lk-number${record.kind === "refund" ? " lk-refund" : ""}`), el("span", amount.currency, "lk-record-currency lk-number"));
     title.append(money);
     if (amount.original)
         title.append(el("span", amount.original, "lk-record-original"));
+    title.append(el("span", capturedRecordMeta(record, result), "lk-record-meta"));
+    if (record.occurrence.precision === "instant") {
+        const offset = new Intl.DateTimeFormat("en", { timeZone: result.timeZone, timeZoneName: "shortOffset" }).formatToParts(new Date(record.occurrence.at)).find(part => part.type === "timeZoneName")?.value?.replace("GMT", "UTC") ?? result.timeZone;
+        title.append(el("span", `${record.occurrence.provenance === "notification" || record.occurrence.provenance === "capture" ? "通知截取時間 · " : "手動指定時間 · "}${offset}`, "lk-muted lk-record-time-zone"));
+    }
     element.append(title);
     const recovery = recordSyncNotice(row.syncState, sessionWritable, actions, row.recoveryCopy);
     if (recovery)
@@ -63,35 +70,13 @@ export function recordSheetView(record, result, writable, actions) {
     }
     const facts = el("div", undefined, "lk-record-facts");
     function fact(glyph, body) { facts.append(icon(glyph, 18), typeof body === "string" ? el("span", body) : body); }
-    if (record.recurrence || record.recurring)
-        fact("event_repeat", recurringRuleLine(record, result));
-    const purpose = el("span", undefined, "lk-record-purpose");
-    purpose.append(el("span", record.split ? "拆帳" : categoryPresentation(result.categories, record.categoryId).label));
     if (record.categoryId || record.split) {
         const source = classificationSource(record);
-        const provenance = el("span", undefined, "lk-classification-source");
-        provenance.append(icon(source.icon, 14), el("span", source.text));
-        purpose.append(provenance);
+        fact(source.icon, el("span", source.text, "lk-classification-source"));
     }
-    fact("sell", purpose);
-    const date = el("span", undefined, "lk-record-date");
-    date.append(el("span", `${screenDates.day(recordOn)}${timeLabel(record, result.timeZone) ? ` ${timeLabel(record, result.timeZone)}` : ""}`));
-    let zone = "只有日期";
-    if (record.occurrence.precision === "instant") {
-        const offset = new Intl.DateTimeFormat("en", { timeZone: result.timeZone, timeZoneName: "shortOffset" }).formatToParts(new Date(record.occurrence.at)).find(part => part.type === "timeZoneName")?.value?.replace("GMT", "UTC") ?? result.timeZone;
-        zone = `${record.occurrence.provenance === "notification" || record.occurrence.provenance === "capture" ? "通知截取時間 · " : "手動指定時間 · "}${offset}`;
-    }
-    date.append(el("span", zone, "lk-muted"));
-    fact("event", date);
-    const method = button(recordPaymentMethodName(record.paymentMethod, result), () => actions.action?.("method"), "lk-inline-link");
-    method.setAttribute("aria-label", "付款方式");
-    method.disabled = !writable || record.voided;
-    fact("credit_card", method);
     const methodRevision = paymentMethodRevision(record, result);
     if (methodRevision)
         fact("history", button(methodRevision, actions.history, "lk-inline-link lk-payment-method-revision"));
-    if (record.projectId)
-        fact("luggage", result.projects.find(item => item.id === record.projectId)?.label ?? record.projectId);
     if (record.subscription) {
         const subscription = el("span", undefined, "lk-record-date");
         subscription.append(el("span", "訂閱"));
@@ -99,9 +84,8 @@ export function recordSheetView(record, result, writable, actions) {
             subscription.append(el("span", record.subscription.note, "lk-muted"));
         fact("autorenew", subscription);
     }
-    if (record.notes)
-        fact("edit_note", record.notes);
-    const valuation = valuationLabel(record, screenDates.date);
+    const showsRateRow = recordFieldItems(record, result.report.records).some(item => item.action === "fx");
+    const valuation = showsRateRow ? null : valuationLabel(record, screenDates.date);
     if (valuation)
         fact("currency_exchange", valuation);
     if (original)
@@ -127,17 +111,11 @@ export function recordSheetView(record, result, writable, actions) {
         plan.append(heading, schedule);
         element.append(plan);
     }
-    const tiles = el("div", undefined, "lk-record-actions");
-    for (const item of recordActionItems(record)) {
-        const tile = button("", () => actions.action?.(item.action), "lk-action-tile");
-        tile.setAttribute("aria-label", item.action === "link" ? "連結原始消費" : item.label);
-        tile.disabled = !writable || record.voided;
-        tile.append(icon(item.icon, 22), el("span", item.label));
-        tiles.append(tile);
-    }
-    element.append(tiles);
-    if (writable && !record.voided && !record.recurrence)
-        element.append(button("作廢", () => actions.void?.(), "lk-void"));
+    const controls = recordFieldsView(record, result, writable, actions, today);
+    element.append(controls.fields, controls.feedback, controls.chips);
+    const voidItem = recordChipItems(record, result.report.records, true).find(item => item.action === "void");
+    if (writable && !record.voided && voidItem)
+        element.append(button(voidItem.label, () => actions.void?.(), "lk-void"));
     if (row.syncState === "failed" && sessionWritable)
         element.append(el("div", "先重送或捨棄才能再編輯", "lk-record-edit-hint"));
     else if (!sessionWritable) {

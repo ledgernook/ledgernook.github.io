@@ -9,15 +9,20 @@
 .lk-record-detail-amount { padding: 0 4px; font: 800 26px/1.2 var(--f-num); }
 .lk-record-detail-meta { margin-top: -10px; padding: 0 4px; border: 0; background: transparent; text-align: left; font: 600 12px/1.4 var(--f-num); color: var(--mute); }
 .lk-record-detail-body { display: flex; flex-direction: column; gap: 12px; }
+.lk-record-sheet-body .lk-record-detail-fields { background: var(--bg); }
 .lk-record-detail-fields { border-radius: var(--r-card); background: var(--card); overflow: hidden; }
-.lk-record-detail-field { width: 100%; min-height: 48px; display: flex; align-items: center; gap: 12px; padding: 10px 16px; border: 0; background: transparent; color: var(--ink); text-align: left; font: 500 14px var(--f-ui); }
+.lk-record-detail-field { position: relative; box-sizing: border-box; width: 100%; min-height: 48px; display: flex; align-items: center; gap: 12px; padding: 10px 16px; border: 0; background: transparent; color: var(--ink); text-align: left; font: 500 14px var(--f-ui); }
 .lk-record-detail-field + .lk-record-detail-field { border-top: 1px solid var(--line); }
 .lk-record-detail-field > .lk-icon { flex: none; color: var(--ink2); }
 .lk-record-detail-field > span:not(.lk-icon):not(.lk-record-detail-value) { flex: 1; min-width: 0; }
-.lk-record-detail-value { max-width: 60%; overflow-wrap: anywhere; text-align: right; font: 400 13px/1.4 var(--f-ui); color: var(--mute); }
+.lk-record-detail-value { flex: none; max-width: 60%; overflow-wrap: anywhere; text-align: right; font: 400 13px/1.4 var(--f-ui); color: var(--ink2); font-variant-numeric: tabular-nums; }
+.lk-record-detail-value[data-strong="true"] { color: var(--ink); }
+.lk-record-detail-value.lk-record-empty { color: var(--mute); }
+.lk-record-detail-field:disabled, .lk-record-detail-field[data-disabled="true"] { opacity: .5; }
+.lk-record-date-feedback:empty { display: none; }
 .lk-record-detail-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .lk-record-detail-chip { height: 34px; padding: 0 14px 0 10px; border: 0; border-radius: var(--r-pill); display: flex; align-items: center; gap: 5px; background: var(--soft); color: var(--ink); font: 500 13px var(--f-ui); }
-.lk-record-detail-chip.lk-void { color: var(--ink) !important; }
+.lk-record-detail-chip.lk-void { align-self: auto; height: 34px; padding: 0 14px 0 10px; background: var(--soft); color: var(--ink) !important; font: 500 13px var(--f-ui); }
 .lk-record-detail-chip:disabled { opacity: .5; }
 .lk-record-detail-step { padding: 12px 14px; border-radius: var(--r-card); background: var(--card); display: flex; flex-direction: column; gap: 10px; }
 .lk-record-detail-back { display: flex; align-items: center; gap: 8px; margin: -2px 0 0 -4px; }
@@ -38,16 +43,11 @@
 .lk-split-label { flex: 1; display: flex; flex-direction: column; font: 500 14px var(--f-ui); }
 .lk-split-note { font: 400 12px var(--f-ui); color: var(--mute); }
 .lk-split-line > .lk-number { font: 800 15px var(--f-num); }
-.lk-record-facts { display: grid; grid-template-columns: 24px 1fr; gap: 10px; font: 400 14px/1.45 var(--f-ui); align-items: start; }
+.lk-record-facts { display: grid; grid-template-columns: 24px 1fr; gap: 6px; font: 400 12px/1.45 var(--f-ui); color: var(--mute); align-items: start; }
 .lk-record-facts > .lk-icon { color: var(--mute); margin-top: 1px; }
-.lk-record-purpose { display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: center; }
-.lk-classification-source { display: flex; align-items: center; gap: 3px; font: 400 12px var(--f-ui); color: var(--mute); }
-.lk-record-date { display: flex; flex-direction: column; font-variant-numeric: tabular-nums; }
+.lk-record-facts .lk-record-date { display: flex; flex-direction: column; font-variant-numeric: tabular-nums; }
 .lk-muted { font-size: 12px; color: var(--mute); }
 .lk-inline-link { border: 0; padding: 0; background: transparent; font: inherit; text-decoration: underline; text-align: left; }
-.lk-record-actions { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 6px; }
-.lk-action-tile { border: 0; background: var(--soft); border-radius: var(--r-btn); padding: 10px 0 8px; display: flex; flex-direction: column; align-items: center; gap: 4px; font: 500 11px var(--f-ui); }
-.lk-action-tile:disabled { opacity: .38; }
 .lk-record-readonly { display: flex; align-items: center; gap: 6px; font: 500 12px var(--f-ui); color: var(--mute); }
 .lk-record-edit-hint { font: 400 12px/1.5 var(--f-ui); color: var(--mute); }
 .lk-void { align-self: center; border: 0; background: transparent; color: var(--danger) !important; font: 500 14px var(--f-ui); padding: 6px 16px; }
@@ -120,7 +120,6 @@
 .lk-editor-subscription { display: flex; align-items: center; gap: 12px; padding: 12px 14px; border-radius: var(--r-btn); background: var(--bg); font: 500 14px var(--f-ui); }
 .lk-editor-original { display: flex; justify-content: space-between; align-items: baseline; padding: 0 4px; font: 400 13px var(--f-ui); color: var(--mute); }
 .lk-editor-original > strong { font: 800 17px var(--f-num); color: var(--ink); }
-.lk-lookup-rate { height: 42px; border: 0; border-radius: var(--r-pill); display: flex; align-items: center; justify-content: center; gap: 6px; background: var(--soft); font: 500 14px var(--f-ui); }
 .lk-editor-message { margin: 0; font: 400 12px/1.55 var(--f-ui); }
 .lk-void-confirmation { display: flex; flex-direction: column; gap: 10px; padding: 14px; border-radius: var(--r-btn); background: var(--bg); font: 400 13px/1.6 var(--f-ui); }
 .lk-void-confirmation > strong { font: 700 14px var(--f-ui); }
@@ -128,4 +127,17 @@
 .lk-void-confirmation button.lk-destructive { background: var(--danger); color: #fff !important; }
 .lk-void-confirmation > div { display: flex; gap: 8px; }
 
-.lk-money-missing > .lk-number { color: var(--mute); }
+
+.lk-record-meta { font: 600 12px/1.4 var(--f-num); font-variant-numeric: tabular-nums; color: var(--mute); }
+.lk-record-detail-amount > .lk-record-currency { margin-left: 8px; font: 600 13px var(--f-num); color: var(--mute); }
+.lk-record-amount-editor { display: flex; flex-direction: column; gap: 10px; padding: 10px; background: var(--bg); border-radius: var(--r-card); }
+
+.lk-record-amount-editor .lk-entry-amount { height: 56px; }
+.lk-record-amount-editor .lk-currency { display: flex; align-items: center; }
+.lk-record-amount-editor .lk-keypad { min-height: 236px; padding-bottom: 0; }
+.lk-record-amount-editor .lk-twd-rate { align-self: flex-end; text-align: right; }
+.lk-record-amount-editor .lk-twd-rate + .lk-twd-rate { margin-top: -6px; }
+
+.lk-record-approx { font: 600 13px var(--f-ui); color: var(--mute); }
+
+.lk-record-detail-amount .lk-record-approx { margin-right: 8px; }

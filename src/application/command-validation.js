@@ -313,7 +313,7 @@ export function detailFor(snapshot, event) { return detailObject(snapshot, event
 export function detailObject(snapshot, event) {
     return snapshot.objects.find((item) => item.path === detailPath(event) && item.kind === "detail");
 }
-function validationLedger(snapshot) {
+export function validationLedger(snapshot) {
     const rules = snapshot.objects.find(object => object.kind === "user-rules");
     const preferences = snapshot.objects.find(object => object.kind === "preferences");
     return assembleEffectiveLedger({

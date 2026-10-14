@@ -26,6 +26,47 @@ export function refundableMinor(record, records) {
     return Math.max(0, record.amountMinor - records.filter(item => !item.voided && item.refundOf === record.id)
         .reduce((sum, item) => sum + (item.refundAllocation?.originalMinor ?? (item.currency === record.currency ? item.amountMinor : 0)), 0));
 }
+/** General corrections defer to split, installment and recurring revision paths. */
+export function recordCorrectionAvailability(record, records) {
+    if (record.voided || record.id !== record.source.id || record.recurring || record.details?.recurring || record.recurrence ||
+        record.installment || record.details?.installmentPlan || record.evidenceOf)
+        return { amount: false, date: false };
+    let amount = !record.split && !record.details?.split && !record.details?.refundAllocation;
+    const purchaseId = record.details?.refundOf ?? record.refundOf;
+    const purchase = purchaseId ? records.find(item => item.id === purchaseId) : record;
+    if (!purchase || purchase.voided || purchase.kind !== "expense" || purchase.recurring || purchase.details?.recurring) {
+        return purchaseId ? { amount: false, date: false } : { amount, date: true };
+    }
+    if (purchaseId && purchase.currency !== record.currency)
+        amount = false;
+    // The edited refund replaces its own credit; only other refunds consume its available capacity.
+    let refunded = 0;
+    for (const refund of records) {
+        if (refund.voided || (refund.details?.refundOf ?? refund.refundOf) !== purchase.id || purchaseId && refund.id === record.id)
+            continue;
+        const allocation = refund.details?.refundAllocation ?? refund.refundAllocation;
+        if (allocation ? allocation.currency !== purchase.currency || refund.currency === purchase.currency && allocation.originalMinor !== refund.amountMinor
+            : refund.currency !== purchase.currency) {
+            amount = false;
+            break;
+        }
+        refunded += allocation?.originalMinor ?? refund.amountMinor;
+        if (!Number.isSafeInteger(refunded)) {
+            amount = false;
+            break;
+        }
+    }
+    // There must be a positive, safe, different amount, rather than only the current no-op value.
+    if (purchaseId ? purchase.amountMinor - refunded < 1 || purchase.amountMinor - refunded === 1 && record.amountMinor === 1
+        : refunded === Number.MAX_SAFE_INTEGER && record.amountMinor === Number.MAX_SAFE_INTEGER)
+        amount = false;
+    return { amount, date: true };
+}
+/** Same exact decimal parser as the other record editors, restricted to positive money. */
+export function recordCorrectionAmount(record, value) {
+    const amount = enteredMinor(value, record.currency);
+    return amount !== null && amount > 0 ? amount : null;
+}
 /** Insufficient same-currency purchases remain visible but disabled, as in the reference picker. */
 export function refundCandidates(refund, records) {
     return records.filter(item => item.kind === "expense" && !item.voided && item.recurring === null && item.recurrence === null && !item.installment && !item.evidenceOf &&

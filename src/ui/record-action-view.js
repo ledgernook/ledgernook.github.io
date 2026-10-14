@@ -1,3 +1,8 @@
+import { amountCorrectionPreview, correctionCurrency } from "./amount-correction-model.js";
+import { twdEntryField } from "./twd-entry-view.js";
+import { sourceTwdValue } from "../core/index.js";
+import { amountEntryField, amountEntryKeypad } from "./amount-entry-view.js";
+import { keypadAmount } from "./manual-entry-model.js";
 import { currencyScale, nextCalendarDate } from "../core/index.js";
 import { enteredMinor, installmentEditorPreview, merchantRuleCount, refundableMinor, refundCandidateEnabled, refundCandidates, splitDraftState } from "../application/record-actions.js";
 import { categoryPresentation } from "./category-presentation.js";
@@ -8,13 +13,13 @@ import { icon, iconButton } from "./icons.js";
 import { button, categoryBadge, deferNativeDateRender, destructiveConfirmation, nativeDateInput, saveButton, segments, switchControl, textEntry } from "./shared-controls.js";
 import { canSaveRecordAction, newRecurringPreview, recurringDateLimit } from "./record-action-model.js";
 import { screenDateFormatter } from "./screen-date-format.js";
-import { recurringAnchorDate, recurringRuleLine } from "./record-sheet-model.js";
+import { exchangeRateText, recurringAnchorDate, recurringRuleLine } from "./record-sheet-model.js";
 import { paymentMethodChoices } from "./manual-entry-view.js";
 export function recordActionTitle(action, record) {
     const title = record.merchant ?? record.notes ?? "單筆紀錄";
     if (action === "method")
         return "付款方式";
-    const prefix = { split: "拆帳", refund: "退款", inst: "分期", fx: "換算", recur: "定期", "occurrence-amount": "這次金額", "occurrence-skip": "跳過這次" }[action];
+    const prefix = { split: "拆帳", refund: "退款", inst: "分期", recur: "定期", "occurrence-amount": "這次金額", "occurrence-skip": "跳過這次" }[action];
     return action === "link" ? "連結原始消費" : `${prefix ? `${prefix} · ` : ""}${title}`;
 }
 export function recordActionView(action, record, result, initial, actions, today = result.asOf, picker) {
@@ -65,10 +70,39 @@ export function recordActionView(action, record, result, initial, actions, today
         element.replaceChildren();
         const d = state.draft, save = () => actions.save();
         const recurring = record.recurring !== null || record.recurrence !== null;
-        const enabled = state.writable !== false && canSaveRecordAction(action, d, record, result.report.records, state.preview, state.recurringPreview, result.timeZone) && !state.locked;
+        const enabled = state.writable !== false && canSaveRecordAction(action, d, record, result.report.records, state.preview, state.recurringPreview, result.timeZone) && !state.locked && !state.quotePending;
         if (recurring && ["recat", "note", "method", "proj"].includes(action))
             element.append(hint("影響每一期", "event_repeat"));
-        if (action === "method") {
+        if (action === "amount") {
+            const entry = el("div", undefined, "lk-record-amount-editor");
+            const currency = correctionCurrency(record, d), focused = state.amountFocus ?? "amount";
+            const amount = amountEntryField(d.amount, currency, actions.currency);
+            if (focused !== "amount")
+                amount.classList.add("lk-entry-unfocused");
+            amount.querySelector("input")?.addEventListener("click", () => actions.focus?.("amount"));
+            entry.append(amount);
+            if (currency !== "TWD") {
+                const preview = amountCorrectionPreview(record, d), own = d.twdMode === "actual" ||
+                    d.twdMode !== "restore" && currency === record.currency && record.valuation?.basis === "actual" && !record.valuation.origin?.source;
+                const twd = d.twdMode === "actual" ? formatInput(d.twd || "0") : preview.amountMinor === null ? "—" : displayAmount(preview.amountMinor);
+                entry.append(twdEntryField(twd, "", own, focused === "twd", !!state.quotePending, () => actions.focus?.("twd"), () => actions.restore?.(), false, preview.approximate));
+                if (own && preview.row?.kind !== "rate")
+                    entry.append(el("span", "自填", "lk-twd-rate lk-number"));
+                if (preview.row?.kind === "rate")
+                    entry.append(el("span", `1 ${currency} = ${exchangeRateText(preview.row, on => screenDateFormatter(result.asOf, [on]).date(on)).replace(" · ", " TWD · ")}`, "lk-twd-rate lk-number"));
+                const stated = sourceTwdValue(record.source, currency);
+                if (own && stated)
+                    entry.append(el("span", `銀行通知${stated.basis === "approximate" ? " 約" : ""} ${displayAmount(stated.amountMinor)}`, "lk-twd-rate lk-number"));
+            }
+            entry.append(amountEntryKeypad(focused === "twd" ? "TWD" : currency, state.busy ? "saving" : state.message ? "failed" : "idle", enabled, key => actions.change(focused === "twd" ? { twd: keypadAmount(d.twdMode === "actual" ? d.twd : "", key, "TWD"), twdMode: "actual" }
+                : { amount: keypadAmount(d.amount, key, currency, currencyScale(currency)) }), save, "儲存"));
+            element.append(entry);
+        }
+        else if (action === "date") {
+            if (state.busy || state.message)
+                element.append(el("span", dayLabel(d.date, today), "lk-muted"), saveButton(state.message ? "重試" : "儲存", save, enabled, state.busy));
+        }
+        else if (action === "method") {
             if (recurring)
                 element.append(hint("定期只能用現金或自訂付款方式", "event_repeat"));
             element.append(paymentMethodChoices({ methods: (picker?.methods ?? []).filter(method => !recurring || method.kind !== "bank") }, d.paymentMethodId, id => actions.selectMethod?.(id)));
@@ -93,14 +127,14 @@ export function recordActionView(action, record, result, initial, actions, today
             const one = button(recurring ? "儲存" : "只改這一筆", save, "lk-editor-primary");
             one.disabled = !enabled || state.busy;
             row.append(one);
-            if (record.merchant && !recurring) {
+            if (record.merchant && record.kind !== "refund" && !recurring) {
                 const rule = button("", () => actions.save(true), "lk-editor-rule");
                 rule.disabled = !enabled || state.busy;
                 rule.append(icon("rule", 18), el("span", "同商家都改"));
                 row.append(rule);
             }
             element.append(row);
-            if (record.merchant && !recurring)
+            if (record.merchant && record.kind !== "refund" && !recurring)
                 element.append(el("span", `「${record.merchant}」${merchantRuleCount(record, result.report.records)} 筆會改分類`, "lk-editor-rule-note"));
         }
         else if (action === "note") {
@@ -258,13 +292,6 @@ export function recordActionView(action, record, result, initial, actions, today
             if (d.subscription)
                 element.append(textEntry(d.subscriptionNote, "訂閱備註", value => actions.change({ subscriptionNote: value })));
             element.append(saveButton("儲存", save, enabled, state.busy));
-        }
-        else if (action === "fx") {
-            const original = el("div", undefined, "lk-editor-original");
-            original.append(el("span", "原始"), el("strong", `${record.currency} ${displayAmount(record.amountMinor, record.currency)}`, "lk-number"));
-            const lookup = button("", actions.lookup, "lk-lookup-rate");
-            lookup.append(icon("refresh", 18), el("span", "重新查詢匯率"));
-            element.append(original, notice("缺少匯率，未計入總額", "currency_exchange"), lookup, money("實際台幣金額", d.twd, "TWD", value => actions.change({ twd: value })), saveButton("儲存", save, enabled, state.busy));
         }
         if (state.message) {
             const message = el("p", state.message, "lk-editor-error lk-editor-message");

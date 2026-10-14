@@ -1,5 +1,9 @@
-import { enteredMinor, refundLinkInput, splitDraftState } from "../application/record-actions.js";
-import { minorToDecimal } from "../core/index.js";
+import { isReferenceQuote } from "../application/reference-quote.js";
+import { amountCorrectionInput, changeCorrectionCurrency, correctionCurrency, unchangedAmountCorrection } from "./amount-correction-model.js";
+import { currencyPickerView } from "./currency-picker-view.js";
+import { enteredMinor, recordCorrectionAvailability, refundLinkInput, splitDraftState } from "../application/record-actions.js";
+import { isCurrencyCode, minorToDecimal, sourceTwdValue } from "../core/index.js";
+import { recordRow } from "./record-list-model.js";
 import { dateAt, recordDate } from "./ledger-format.js";
 import { canSaveRecordAction, monthlyPlanInput, recordActionDraft, recurringEndInput, recurringOccurrenceAmount, recurringRevisionInput } from "./record-action-model.js";
 import { recordActionTitle, recordActionView } from "./record-action-view.js";
@@ -20,8 +24,14 @@ export function recordFailure(result, action) {
     return "未儲存，草稿已保留，請重試";
 }
 /** One operation identity and draft survive local persistence failure; durable local acceptance closes sheets. */
-export async function openRecordAction(host, action, record, result) {
+export async function openRecordAction(host, action, record, result, directDate) {
+    if (action === "fx")
+        action = "amount";
     if (host.session.capability.status !== "writable" || record.voided || result.localChanges?.records[record.id] === "failed")
+        return;
+    if ((action === "amount" || action === "date") && !recordCorrectionAvailability(record, result.report.records)[action])
+        return;
+    if (action === "date" && !directDate)
         return;
     const picker = action === "method" ? await host.session.preferences?.picker() : undefined;
     if (action === "method" && !picker)
@@ -33,14 +43,32 @@ export async function openRecordAction(host, action, record, result) {
     const summary = result.recurringRules.find(item => item.anchorId === recordId);
     const defaults = recordActionDraft(record, result.report.records, dateAt(host.now(), result.timeZone), result.timeZone, packet?.draft.operationId ?? host.operationId(), summary);
     let draft = packet ? { ...defaults, ...packet.draft } : defaults;
+    if (!packet && action === "amount")
+        draft = { ...draft, amount: minorToDecimal(record.amountMinor, record.currency).replace(/\.00$/, "") };
+    if (action === "date")
+        draft = { ...draft, date: directDate.occurredOn };
     const currentMethodId = record.paymentMethod.id ?? record.paymentMethod.bankId ?? picker?.methods.find(method => method.label === record.paymentMethod.label)?.id ?? null;
     if (action === "method" && !packet)
         draft = { ...draft, paymentMethodId: currentMethodId };
     let state = { draft, busy: false, locked: false, message: "", preview: null, writable: true }, revision = 0, closed = false;
+    let quoteRequest;
     let pending = packet?.pending ?? "save";
     const today = dateAt(host.now(), result.timeZone);
     const view = recordActionView(action, record, result, state, { change, save: rule => { void save(rule ? "rule" : state.locked ? pending : "save"); }, unsplit: () => { void save("unsplit"); },
-        lookup: () => { void save("lookup"); }, recheck: host.recheck, newLineId: () => `line-${host.operationId()}`,
+        currency: () => {
+            if (state.busy || state.locked || state.writable === false || closed)
+                return;
+            host.sheets.push({ title: "幣別", view: currencyPickerView(correctionCurrency(record, draft), result.frequentCurrencies, currency => {
+                    host.sheets.pop();
+                    change(changeCorrectionCurrency(record, currency));
+                    update({ amountFocus: "amount" });
+                    void loadQuote();
+                }), close: () => host.sheets.pop() });
+        }, focus: amountFocus => update({ amountFocus }), restore: () => {
+            change({ twdMode: "restore", twd: "", quote: undefined });
+            update({ amountFocus: "amount" });
+            void loadQuote();
+        }, recheck: host.recheck, newLineId: () => `line-${host.operationId()}`,
         cancel: () => { if (!state.busy) {
             closed = true;
             revision++;
@@ -48,7 +76,7 @@ export async function openRecordAction(host, action, record, result) {
             host.sheets.pop();
         } },
         selectMethod: id => {
-            if (state.busy || closed || host.session.capability.status !== "writable")
+            if (state.busy || state.quotePending || closed || host.session.capability.status !== "writable")
                 return;
             if (id === currentMethodId) {
                 closed = true;
@@ -64,16 +92,46 @@ export async function openRecordAction(host, action, record, result) {
         if (state.writable !== writable)
             update({ writable });
     });
-    view.dispose = () => { closed = true; revision++; unsubscribe?.(); };
-    function update(patch) { state = { ...state, ...patch, draft }; if (!closed)
-        view.update(state); }
+    view.dispose = () => { closed = true; revision++; quoteRequest?.abort(); unsubscribe?.(); };
+    function update(patch) {
+        state = { ...state, ...patch, draft };
+        if (directDate) {
+            directDate.busy = state.busy;
+            directDate.input.disabled = state.busy || state.writable === false;
+        }
+        if (!closed)
+            view.update(state);
+    }
     function change(patch) {
-        if (state.busy || state.locked || closed)
+        if (state.busy || state.locked || state.writable === false || closed)
             return;
         draft = { ...draft, ...patch };
         update({ message: "" });
         if (action === "inst" || action === "recur" && recurring)
             void preview();
+    }
+    async function loadQuote() {
+        quoteRequest?.abort();
+        const currency = correctionCurrency(record, draft);
+        if (currency === "TWD" || sourceTwdValue(record.source, currency) || state.locked) {
+            update({ quotePending: false });
+            return;
+        }
+        const request = quoteRequest = new AbortController();
+        update({ quotePending: true });
+        try {
+            const quote = await (host.commands ?? host.session.commands).readReferenceQuote(currency, recordDate(record, result.timeZone), request.signal);
+            if (closed || request.signal.aborted)
+                return;
+            draft = { ...draft, quote: quote.status === "found" ? quote.quote : undefined };
+            update({ quotePending: false });
+        }
+        catch {
+            if (closed || request.signal.aborted)
+                return;
+            draft = { ...draft, quote: undefined };
+            update({ quotePending: false });
+        }
     }
     async function preview() {
         if (action === "recur") {
@@ -107,9 +165,9 @@ export async function openRecordAction(host, action, record, result) {
             } }, commands = (host.commands ?? host.session.commands);
         if (kind === "unsplit")
             return commands.unsplit(context, recordId);
-        if (kind === "lookup")
-            return commands.fillValuation({ context, eventId: recordId, requestedOn: recordDate(record, result.timeZone) });
         switch (action) {
+            case "amount": return commands.correctRecord(context, recordId, amountCorrectionInput(record, draft), today, result.timeZone);
+            case "date": return commands.correctRecord(context, recordId, { occurredOn: draft.date }, today, result.timeZone);
             case "recat": {
                 if (kind !== "rule" || recurring)
                     return commands.editDetails(context, recordId, { categoryId: draft.categoryId });
@@ -135,7 +193,7 @@ export async function openRecordAction(host, action, record, result) {
             case "inst": return commands.convertToInstallments(context, recordId, monthlyPlanInput(draft, record));
             case "proj": return commands.editDetails(context, recordId, { projectId: draft.projectId,
                 subscription: draft.subscription ? { ...(draft.subscriptionNote.trim() ? { note: draft.subscriptionNote.trim() } : {}) } : null });
-            case "fx": return commands.fillValuation({ context, eventId: recordId, actualTwdMinor: enteredMinor(draft.twd, "TWD") });
+            case "fx": return { status: "rejected", operationId: draft.operationId, code: "invalid-command" };
             case "recur": {
                 const end = recurringEndInput(draft);
                 return recurring
@@ -150,9 +208,16 @@ export async function openRecordAction(host, action, record, result) {
         }
     }
     async function save(kind) {
-        if (state.busy || closed || host.session.capability.status !== "writable" ||
-            !state.locked && kind !== "unsplit" && kind !== "lookup" && !canSaveRecordAction(action, draft, record, result.report.records, state.preview, state.recurringPreview, result.timeZone))
+        if (state.busy || state.quotePending || closed || host.session.capability.status !== "writable" ||
+            !state.locked && kind !== "unsplit" && !canSaveRecordAction(action, draft, record, result.report.records, state.preview, state.recurringPreview, result.timeZone))
             return;
+        if (action === "amount" && !state.locked && unchangedAmountCorrection(record, draft)) {
+            closed = true;
+            quoteRequest?.abort();
+            void host.session.drafts.delete(key).catch(() => { });
+            host.sheets.pop();
+            return;
+        }
         pending = kind;
         draft = { ...draft, commandAt: draft.commandAt ?? host.now() };
         update({ busy: true, message: "" });
@@ -171,9 +236,9 @@ export async function openRecordAction(host, action, record, result) {
                     host.onFreshRecord?.(outcome.operationId);
                 closed = true;
                 host.sheets.dismiss();
-                await host.afterWrite(["recat", "note", "split", "fx", "link"].includes(action), kind === "rule" ? "已建立規則" : kind === "unsplit" ? "已取消拆帳" : action === "recur" ? recurring ? "已更新定期" : "已開始定期"
+                await host.afterWrite(["recat", "note", "split", "link"].includes(action), kind === "rule" ? "已建立規則" : kind === "unsplit" ? "已取消拆帳" : action === "recur" ? recurring ? "已更新定期" : "已開始定期"
                     : action === "occurrence-amount" ? "已改這次金額" : action === "occurrence-skip" ? "已跳過這一期"
-                        : action === "refund" ? `已記退款 ${minorToDecimal(enteredMinor(draft.amount, record.currency), record.currency)}` : action === "link" ? "已連結" : action === "inst" ? "已設定分期" : action === "fx" ? "已換算" : "");
+                        : action === "refund" ? `已記退款 ${minorToDecimal(enteredMinor(draft.amount, record.currency), record.currency)}` : action === "link" ? "已連結" : action === "inst" ? "已設定分期" : "");
             }
             else {
                 await host.session.drafts.put(key, { draft, pending });
@@ -185,9 +250,22 @@ export async function openRecordAction(host, action, record, result) {
             update({ busy: false, message: "未儲存，草稿已保留，請重試" });
         }
     }
-    host.sheets.push({ title: recordActionTitle(action, record), swipe: action === "recat" ? "close" : "rubber-band", view, close: () => { if (state.busy)
+    if (directDate) {
+        directDate.element.replaceChildren(view.element);
+        directDate.retain?.(view);
+        await save("save");
+        return;
+    }
+    host.sheets.push({ title: action === "amount" ? recordRow(record, result, true).title : recordActionTitle(action, record), swipe: action === "recat" ? "close" : "rubber-band", view, close: () => { if (state.busy)
             return; closed = true; revision++; if (!state.locked)
             void host.session.drafts.delete(key); host.sheets.pop(); } });
+    if (action === "amount" && !state.locked && correctionCurrency(record, draft) !== "TWD" &&
+        (draft.twdMode === "restore" || !record.reportingValue)) {
+        if (!record.reportingValue && !packet)
+            change({ twdMode: "restore" });
+        if (!draft.quote)
+            await loadQuote();
+    }
     if (action === "inst" || action === "recur" && recurring)
         await preview();
 }
@@ -195,12 +273,17 @@ function isStoredDraft(value) {
     if (!value || typeof value !== "object" || !("draft" in value) || !("pending" in value))
         return false;
     const draft = value.draft;
-    return ["save", "rule", "unsplit", "lookup"].includes(String(value.pending)) &&
+    return ["save", "rule", "unsplit"].includes(String(value.pending)) &&
         !!draft && typeof draft === "object" && "operationId" in draft && typeof draft.operationId === "string" &&
         ["planId", "notes", "amount", "date", "originalAmount", "firstOn", "fee", "subscriptionNote", "twd"].every(key => key in draft && typeof draft[key] === "string") &&
         ["endOn", "effectiveOn", "recurAmount", "occurrenceAmount"].every(key => !(key in draft) || typeof draft[key] === "string") &&
         (!("cadence" in draft) || ["monthly", "yearly"].includes(String(draft.cadence))) &&
         (!("endKind" in draft) || ["none", "date", "count"].includes(String(draft.endKind))) && (!("endCount" in draft) || Number.isInteger(draft.endCount)) &&
+        (!("currency" in draft) || isCurrencyCode(draft.currency)) &&
+        (!("twdMode" in draft) || ["follow", "actual", "restore"].includes(String(draft.twdMode))) &&
+        (!("quote" in draft) || draft.quote === undefined || !!draft.quote && typeof draft.quote === "object" &&
+            "currency" in draft.quote && isCurrencyCode(draft.quote.currency) && "requestedOn" in draft.quote && typeof draft.quote.requestedOn === "string" &&
+            isReferenceQuote(draft.quote, draft.quote.currency, draft.quote.requestedOn)) &&
         "lines" in draft && Array.isArray(draft.lines) && draft.lines.every(line => line && typeof line.id === "string" && typeof line.amount === "string" && typeof line.note === "string") &&
         "count" in draft && Number.isInteger(draft.count) && "subscription" in draft && typeof draft.subscription === "boolean";
 }

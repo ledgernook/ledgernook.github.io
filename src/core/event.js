@@ -1,5 +1,15 @@
 import { isCurrencyCode } from "./money.js";
 import { hasOnlyKeys, isBoundedText, isCalendarDate, isCanonicalUtcInstant, isPlainObject, STABLE_ID_PATTERN, UUID_PATTERN } from "./validation.js";
+/** Source TWD value, independent of effective amount corrections. */
+export function sourceTwdValue(source, currency) {
+    if (currency === source.currency)
+        return source.statedTwdEquivalent;
+    if (source.source !== "manual" && source.currency === "TWD" && currency !== "TWD")
+        return {
+            amountMinor: source.amountMinor, basis: source.approximateAmount ? "approximate" : "actual",
+        };
+    return undefined;
+}
 export class LedgerEventValidationError extends Error {
     code;
     constructor(code) {

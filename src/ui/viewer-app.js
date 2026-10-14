@@ -1,6 +1,6 @@
 import { createPushScheduler } from "./push-scheduler.js";
 import { createSyncOperation } from "./sync-operation.js";
-import { blankManualDraft, keypadAmount, manualCommand, restoreManualDraft, unrecordedManualDraft, shouldReplaceManualDraft, trimManualAmount } from "./manual-entry-model.js";
+import { blankManualDraft, canSaveManualDraft, keypadAmount, manualCommand, restoreManualDraft, unrecordedManualDraft, shouldReplaceManualDraft } from "./manual-entry-model.js";
 import { unrecordedNoticeModel, showFirstCaptureCard } from "./unrecorded-model.js";
 import { unrecordedNotice } from "./unrecorded-view.js";
 import { dateAt, shiftDate } from "./ledger-format.js";
@@ -95,6 +95,33 @@ export function mountViewerApp(root, session, options) {
     let restoreCachedView = true;
     let manualRestored = false, manualLocked = false, manualAttemptAt = null;
     let draftWrites = Promise.resolve();
+    let manualFocus = "amount", manualQuotePending = false, manualQuoteKey = "";
+    let manualQuoteRequest;
+    function ensureManualQuote() {
+        if (!draft || manualLocked || saveState === "saving")
+            return;
+        const key = `${draft.operationId}/${draft.currency}/${draft.date}`;
+        if (key === manualQuoteKey)
+            return;
+        manualQuoteRequest?.abort();
+        manualQuoteKey = key;
+        manualQuotePending = false;
+        if (draft.currency === "TWD" || draft.quote)
+            return;
+        const request = manualQuoteRequest = new AbortController();
+        manualQuotePending = true;
+        void session.commands.readReferenceQuote(draft.currency, draft.date, request.signal).then(outcome => {
+            if (disposed || request.signal.aborted || !draft || key !== `${draft.operationId}/${draft.currency}/${draft.date}`)
+                return;
+            draft = { ...draft, quote: outcome.status === "found" ? outcome.quote : undefined };
+            manualQuotePending = false;
+            void retainManualDraft();
+            render();
+        }).catch(() => { if (!disposed && !request.signal.aborted) {
+            manualQuotePending = false;
+            render();
+        } });
+    }
     const pushScheduler = createPushScheduler({
         canPush: () => !disposed && session.capability.status === "writable" && !!session.push && !!session.outbox,
         visible: () => document.visibilityState !== "hidden",
@@ -299,9 +326,14 @@ export function mountViewerApp(root, session, options) {
     function changeManual(patch) {
         if (!draft || manualLocked || saveState === "saving" || disposed)
             return;
-        draft = { ...draft, ...patch };
+        const rateChanged = patch.currency !== undefined && patch.currency !== draft.currency || patch.date !== undefined && patch.date !== draft.date;
+        draft = { ...draft, ...patch, ...(rateChanged ? { quote: undefined } : {}) };
         message = "";
         manualAttemptAt = null;
+        if (rateChanged) {
+            manualQuoteKey = "";
+            ensureManualQuote();
+        }
         void retainManualDraft();
         render();
     }
@@ -593,9 +625,12 @@ export function mountViewerApp(root, session, options) {
         recordOpenRevision++;
         for (const step of openedRecord?.steps ?? [])
             step.view.dispose?.();
+        openedRecord?.date?.view.dispose?.();
         openedRecord = null;
     }
     function closeRecord() {
+        if (openedRecord?.date?.target.busy)
+            return;
         const inline = recordIsInline();
         while (openedRecord?.steps.length) {
             const depth = openedRecord.steps.length;
@@ -611,6 +646,20 @@ export function mountViewerApp(root, session, options) {
     function recordIsInline() { return shell.layout === "regular" && !settings && (tab === "home" || tab === "list"); }
     // Keep real mutation views alive when they move between the inline body and C/N/phone sheets.
     function retainedSheet(options) { return { ...options, view: { element: options.view.element } }; }
+    function restoreRecordDateFeedback(root) {
+        if (!openedRecord?.date)
+            return;
+        const { target, view: dateView } = openedRecord.date;
+        const feedback = root.querySelector(".lk-record-date-feedback");
+        if (feedback && dateView.element.parentElement !== feedback)
+            feedback.append(dateView.element);
+        const input = root.querySelector(".lk-record-detail-fields")?.querySelector(".lk-record-date")?.querySelector("input");
+        if (input) {
+            input.disabled = target.input.disabled;
+            input.value = target.input.value;
+            target.input = input;
+        }
+    }
     function presentOpenedRecord() {
         if (!openedRecord)
             return;
@@ -619,6 +668,7 @@ export function mountViewerApp(root, session, options) {
             render();
         }
         else {
+            restoreRecordDateFeedback(openedRecord.base.view.element);
             shell.sheets.open(retainedSheet(openedRecord.base));
             for (const step of openedRecord.steps)
                 shell.sheets.push(retainedSheet(step));
@@ -650,6 +700,8 @@ export function mountViewerApp(root, session, options) {
             if (openedRecord) {
                 openedRecord.steps = [];
                 openedRecord.action = null;
+                openedRecord.date?.view.dispose?.();
+                delete openedRecord.date;
             }
             render();
         },
@@ -751,7 +803,8 @@ export function mountViewerApp(root, session, options) {
         const sheet = recordSheetView(record, sheetResult, session.capability.status === "writable", { close: closeRecord, open: value => { void openRecord(value, undefined, context, origin); }, history: () => options.history(sheetResult, id), later,
             confirm: () => { void confirmAiRecord(id); }, confirming: recordConfirmingId === id,
             ...(recordConfirmationError?.recordId === id ? { confirmationError: recordConfirmationError.text } : {}),
-            ...recordRecoveryActions(id), action: kind => { void openOpenedRecordAction(kind); }, void: () => showVoidConfirmation({ ...recordMutationHost, commands: editorCommands }, record, sheet.view.element, sheetResult) });
+            ...recordRecoveryActions(id), date: target => { void openOpenedRecordAction("date", target); }, action: kind => { void openOpenedRecordAction(kind); }, void: () => { if (!openedRecord?.date?.target.busy)
+                void showVoidConfirmation({ ...recordMutationHost, commands: editorCommands }, record, sheet.view.element, sheetResult); } }, dateAt(options.now(), sheetResult.timeZone));
         openedRecord = { record, result: sheetResult, commands: editorCommands, base: { title: "單筆紀錄", swipe: "close", origin, recordId: id, view: sheet.view, header: sheet.header, close: closeRecord }, steps: [], action: null };
         if (recordIsInline()) {
             recordsRoute = true;
@@ -761,10 +814,19 @@ export function mountViewerApp(root, session, options) {
         if (action)
             await openOpenedRecordAction(action);
     }
-    async function openOpenedRecordAction(action) {
+    async function openOpenedRecordAction(action, directDate) {
         if (!openedRecord || openedRecord.result.localChanges?.records[openedRecord.record.id] === "failed")
             return;
         const current = openedRecord;
+        if (current.date?.target.busy)
+            return;
+        if (directDate) {
+            current.date?.view.dispose?.();
+            directDate.retain = view => { if (openedRecord === current)
+                current.date = { target: directDate, view };
+            else
+                view.dispose?.(); };
+        }
         current.action = action;
         await openRecordAction({ ...recordMutationHost, sheets: {
                 push(step) { if (openedRecord === current)
@@ -784,7 +846,7 @@ export function mountViewerApp(root, session, options) {
                     else
                         recordSheets.dismiss();
                 },
-            }, commands: current.commands }, action, current.record, current.result);
+            }, commands: current.commands }, action, current.record, current.result, directDate);
     }
     function openRecords(entry) {
         shell.navigate(() => {
@@ -1545,23 +1607,21 @@ export function mountViewerApp(root, session, options) {
                     const { record, result: detailResult } = openedRecord;
                     const detail = recordDetailView(record, detailResult, session.capability.status === "writable", {
                         ...recordRecoveryActions(record.id), close: closeRecord, history: () => options.history(detailResult, record.id),
-                        action: kind => { void openOpenedRecordAction(kind); },
+                        action: kind => { void openOpenedRecordAction(kind); }, date: target => { void openOpenedRecordAction("date", target); }, open: id => { void openRecord(id); },
                         confirm: () => { void confirmAiRecord(record.id); }, confirming: recordConfirmingId === record.id,
                         ...(recordConfirmationError?.recordId === record.id ? { confirmationError: recordConfirmationError.text } : {}),
                         void: () => {
+                            if (openedRecord?.date?.target.busy)
+                                return;
                             const confirmation = { element: el("div", undefined, "lk-record-detail-void") };
                             recordSheets.push({ title: "作廢", view: confirmation, close: () => recordSheets.pop() });
                             void showVoidConfirmation({ ...recordMutationHost, commands: openedRecord.commands }, record, confirmation.element, detailResult, () => recordSheets.pop());
                         },
-                    });
+                    }, dateAt(options.now(), detailResult.timeZone));
+                    restoreRecordDateFeedback(detail.element);
                     const step = openedRecord.steps.at(-1);
-                    const titles = { recat: "分類", note: "備註", method: "付款方式", split: "拆帳", refund: "退款", link: "連結原始消費", inst: "分期", proj: "專案", fx: "換算" };
+                    const titles = { amount: "金額", recat: "分類", note: "備註", method: "付款方式", split: "拆帳", refund: "退款", link: "連結原始消費", inst: "分期", proj: "專案", fx: "換算" };
                     detail.showStep(step ? { ...step, title: openedRecord.steps.length === 1 && openedRecord.action ? titles[openedRecord.action] ?? step.title : step.title } : null);
-                    if (!step) {
-                        // Preserve record-specific disclosures, split lines and the existing installment schedule.
-                        for (const extra of openedRecord.base.view.element.querySelectorAll(":scope > .lk-notice:not(.lk-ai-pending-notice):not(.lk-sync-recovery), :scope > .lk-split-lines, :scope > .lk-installment-summary"))
-                            detail.body.append(extra.cloneNode(true));
-                    }
                     primary.splice(1, primary.length - 1, detail.element);
                 }
                 view.element.classList.add("lk-overview-records");
@@ -1594,13 +1654,20 @@ export function mountViewerApp(root, session, options) {
         else if (tab === "add") {
             recordsPresented = false;
             draft ??= blankManualDraft(options.operationId(), today, picker, result.manualEntryDefaults);
-            shell.show(manualEntryView(draft, result.categories, picker, today, { writable: session.capability.status === "writable", capability: session.capability, saveState, locked: manualLocked,
+            ensureManualQuote();
+            shell.show(manualEntryView(draft, result.categories, picker, today, { writable: session.capability.status === "writable", capability: session.capability, saveState, locked: manualLocked, quotePending: manualQuotePending, amountFocus: manualFocus,
                 projectLabel: result.projects.find(item => item.id === draft.projectId)?.label ?? "專案" }, {
-                change: changeManual, key: key => changeManual({ amount: keypadAmount(draft.amount, key, draft.currency) }),
+                change: changeManual, key: key => changeManual(manualFocus === "twd"
+                    ? { actualTwdAmount: keypadAmount(draft.actualTwdAmount ?? "", key, "TWD") }
+                    : { amount: keypadAmount(draft.amount, key, draft.currency) }),
+                focus: field => { if (manualLocked || saveState === "saving")
+                    return; manualFocus = field; render(); },
+                restore: () => { manualFocus = "amount"; changeManual({ actualTwdAmount: undefined }); },
                 currency: () => {
                     if (!draft || manualLocked || saveState === "saving")
                         return;
-                    openCurrencyPicker(draft.currency, currency => changeManual({ currency, amount: trimManualAmount(draft.amount, currency) }));
+                    openCurrencyPicker(draft.currency, currency => { if (currency === draft.currency)
+                        return; manualFocus = "amount"; changeManual({ currency, amount: "", actualTwdAmount: undefined }); });
                 },
                 save: () => { void save(); }, note: openManualNote, project: openManualProject, date: selected => changeManual({ date: selected }), later
             }, result.earliestRecordDate ?? today), { kind: "entry" });
@@ -1850,7 +1917,7 @@ export function mountViewerApp(root, session, options) {
     }
     async function save() {
         detachMissingNotification();
-        if (!draft || saveState === "saving" || session.capability.status !== "writable" || !draft.paymentMethodId || manualCommand(draft).input.amountMinor === 0)
+        if (!draft || saveState === "saving" || session.capability.status !== "writable" || manualQuotePending || !canSaveManualDraft(draft))
             return;
         saveState = "saving";
         manualAttemptAt ??= options.now();
@@ -1889,6 +1956,7 @@ export function mountViewerApp(root, session, options) {
             manualLocked = false;
             manualAttemptAt = null;
             lastManualSaveAt = options.now();
+            manualFocus = "amount";
             draft = blankManualDraft(options.operationId(), dateAt(options.now(), result.timeZone), picker, result.manualEntryDefaults);
             tab = "home";
             settings = false;
@@ -2109,7 +2177,7 @@ export function mountViewerApp(root, session, options) {
         openTripSettings: showTripSheet, recordOrganizationActivity: () => companionActivity("happy"), recordNewEntryActivity: () => companionActivity("attention"), wakeCompanion,
         flushPush: () => pushScheduler.immediate(),
         dispose() { if (disposed)
-            return; disposed = true; syncGeneration++; activeSyncOperation?.abort(); for (const operation of activePushOperations)
+            return; disposed = true; manualQuoteRequest?.abort(); syncGeneration++; activeSyncOperation?.abort(); for (const operation of activePushOperations)
             operation.abort(); pushScheduler.dispose(); unsubscribeChanges?.(); clearOpenedRecord(); freshRecords.reset(); unsubscribeLayout(); stopCompanionMotion(); if (observesVisibilityChange && typeof document.removeEventListener === "function")
             document.removeEventListener("visibilitychange", onVisibilityChange); if (observesPageHide && typeof window.removeEventListener === "function")
             window.removeEventListener("pagehide", onPageHide); if (observesPageShow && typeof window.removeEventListener === "function")

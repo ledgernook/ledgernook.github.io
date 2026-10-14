@@ -1,10 +1,14 @@
-import { LedgerCommandValidation, sourceById, detailFor, detailObject } from "./command-validation.js";
+import { LedgerCommandValidation, sourceById, detailFor, detailObject, validationLedger } from "./command-validation.js";
+import { recordCorrectionAvailability } from "./record-actions.js";
+import { isReferenceQuote } from "./reference-quote.js";
 import { snapshotPreferences } from "./preferences.js";
-import { canonicalCategoryId, createActualValuation, createMonthlyInstallmentPlan, createReferenceValuation, defaultUserRulesDocument, detailPath, eventPath, InstallmentPlanError, previewInstallmentRevision, projectPath, resolveEventCategory, localDateOf, effectivePaymentMethod, recurringMethodValid, resolveRecurringSchedule, validateRecurringRule, previewRecurringRevision, validateLedgerDetails, validateLedgerEvent, validateLedgerObjectAtPath, validateProject, validateRefundAllocation, USER_RULES_PATH, PREFERENCES_PATH, defaultLedgerPreferences, paymentMethodName, validateLedgerPreferences, } from "../core/index.js";
+import { canonicalCategoryId, createActualValuation, createMonthlyInstallmentPlan, createReferenceValuation, proportionalMinor, sourceTwdValue, isCurrencyCode, defaultUserRulesDocument, detailPath, eventPath, InstallmentPlanError, previewInstallmentRevision, projectPath, resolveEventCategory, localDateOf, isCalendarDate, effectivePaymentMethod, recurringMethodValid, resolveRecurringSchedule, validateRecurringRule, previewRecurringRevision, validateLedgerDetails, validateLedgerEvent, validateLedgerObjectAtPath, validateProject, validateRefundAllocation, USER_RULES_PATH, PREFERENCES_PATH, defaultLedgerPreferences, paymentMethodName, validateLedgerPreferences, } from "../core/index.js";
 import { applyRuleOperation, RuleConflictError, ruleOperationSatisfied } from "../core/rule-operations.js";
 import { checkMutationCommand, } from "./ports.js";
 const DETAIL_FIELDS = new Set(["correction", "voided", "categoryId", "subscription", "projectId", "notes", "paymentMethodId", "paymentMethodLabel", "refundOf", "split"]);
-const MANUAL_FIELDS = new Set(["kind", "amountMinor", "currency", "occurredAt", "occurredOn", "timeProvenance", "merchant", "description", "paymentMethodLabel", "paymentMethodId", "approximateAmount", "statedTwdEquivalent"]);
+const INITIAL_DETAIL_FIELDS = new Set([...DETAIL_FIELDS, "valuation"]);
+const RECORD_CORRECTION_FIELDS = new Set(["amountMinor", "currency", "occurredOn", "twdIntent", "quote"]);
+const MANUAL_FIELDS = new Set(["kind", "amountMinor", "currency", "occurredAt", "occurredOn", "timeProvenance", "merchant", "description", "paymentMethodLabel", "paymentMethodId", "approximateAmount", "statedTwdEquivalent", "quote", "actualTwdMinor"]);
 export function parseInboxEvent(notification, reader) {
     try {
         if (!notification.bankId)
@@ -29,6 +33,29 @@ export class LedgerCommands extends LedgerCommandValidation {
     /** Build against the values the editor showed; replay resolves later competing changes. */
     at(snapshot) {
         return new LedgerCommands({ ...this.options, store: { read: async () => snapshot, publish: this.options.store.publish.bind(this.options.store) } });
+    }
+    /** Read-only editor lookup. Save receives this exact quote; it never looks up another rate. */
+    async readReferenceQuote(currency, date, signal) {
+        const request = { currency, date };
+        const failed = (code) => ({ status: "failed", request, code });
+        if (!isCurrencyCode(currency) || currency === "TWD" || !isCalendarDate(date))
+            return failed("unsupported-request");
+        if (signal?.aborted)
+            return failed("cancelled");
+        if (!this.options.rates)
+            return failed("rate-unavailable");
+        try {
+            const results = await this.options.rates.readRates([request], signal);
+            const result = results.find(item => item.request.currency === currency && item.request.date === date);
+            if (result?.status === "failed")
+                return result;
+            if (result?.status !== "found" || !isReferenceQuote(result.quote, currency, date))
+                return failed("invalid-response");
+            return { status: "found", request, quote: Object.freeze({ ...result.quote }) };
+        }
+        catch {
+            return failed(signal?.aborted ? "cancelled" : "network");
+        }
     }
     async createManual(context, input, initialDetails) {
         const snapshot = await this.options.store.read();
@@ -92,9 +119,10 @@ export class LedgerCommands extends LedgerCommandValidation {
     async #createManual(context, snapshot, input, initialDetails, additionalWrites = []) {
         if (!plainWithKeys(input, MANUAL_FIELDS))
             return rejected(context, "invalid-object");
+        const { quote, actualTwdMinor, ...sourceInput } = input;
         let event;
         try {
-            event = validateLedgerEvent({ ...input, schemaVersion: 1, id: context.operationId, source: "manual", enteredAt: context.now });
+            event = validateLedgerEvent({ ...sourceInput, schemaVersion: 1, id: context.operationId, source: "manual", enteredAt: context.now });
         }
         catch {
             return rejected(context, "invalid-object");
@@ -108,18 +136,39 @@ export class LedgerCommands extends LedgerCommandValidation {
             event = validateLedgerEvent({ ...event, paymentMethodLabel: paymentMethodName(method) });
         }
         const writes = [{ path: eventPath(event), expectedObjectId: null, value: event }, ...additionalWrites];
-        if (initialDetails !== undefined) {
-            if (!plainWithKeys(initialDetails, DETAIL_FIELDS))
-                return rejected(context, "invalid-object");
-            if (Object.keys(initialDetails).length === 0)
-                return this.#execute(context, snapshot, writes);
+        if (initialDetails !== undefined && !plainWithKeys(initialDetails, INITIAL_DETAIL_FIELDS))
+            return rejected(context, "invalid-object");
+        const fields = { ...initialDetails };
+        if (quote !== undefined || actualTwdMinor !== undefined) {
+            if (fields.valuation !== undefined || quote !== undefined && actualTwdMinor !== undefined)
+                return rejected(context, "invalid-command");
+            try {
+                if (actualTwdMinor !== undefined)
+                    fields.valuation = createActualValuation({ currency: event.currency,
+                        amountMinor: event.amountMinor, twdMinor: actualTwdMinor, operationId: context.operationId });
+                else {
+                    const on = event.occurredOn ?? localDateOf(event.occurredAt, snapshotPreferences(snapshot, "UTC").reportingTimeZone);
+                    if (!isReferenceQuote(quote, event.currency, on))
+                        return rejected(context, "invalid-valuation");
+                    fields.valuation = createReferenceValuation({ ...quote, amountMinor: event.amountMinor, operationId: context.operationId });
+                }
+            }
+            catch {
+                return rejected(context, "invalid-valuation");
+            }
+        }
+        if (Object.keys(fields).length) {
             let detail;
             try {
-                detail = validateLedgerDetails({ ...initialDetails, schemaVersion: 1, eventId: event.id, operationId: context.operationId });
+                detail = validateLedgerDetails({ ...fields, schemaVersion: 1, eventId: event.id, operationId: context.operationId });
             }
             catch {
                 return rejected(context, "invalid-object");
             }
+            if (detail.valuation && (detail.valuation.currency !== (detail.correction?.currency ?? event.currency) ||
+                detail.valuation.amountMinor !== (detail.correction?.amountMinor ?? event.amountMinor) ||
+                detail.valuation.operationId !== context.operationId))
+                return rejected(context, "invalid-valuation");
             if (!this.referencesValid(snapshot, detail))
                 return rejected(context, "invalid-object");
             if (!this.splitValid(snapshot, event, detail) || detail.split && detail.voided)
@@ -134,9 +183,12 @@ export class LedgerCommands extends LedgerCommandValidation {
         return this.#execute(context, snapshot, writes);
     }
     async editDetails(context, eventId, patch) {
-        const snapshot = await this.options.store.read();
         if (!plainWithKeys(patch, DETAIL_FIELDS))
             return rejected(context, "invalid-object");
+        return this.#editDetails(context, eventId, patch);
+    }
+    async #editDetails(context, eventId, patch, correctedValuation) {
+        const snapshot = await this.options.store.read();
         if (patch.paymentMethodLabel !== undefined && patch.paymentMethodLabel !== null)
             return rejected(context, "invalid-object");
         if (Object.keys(patch).length === 0)
@@ -156,6 +208,10 @@ export class LedgerCommands extends LedgerCommandValidation {
             else
                 fields[key] = value;
         }
+        if (correctedValuation === null)
+            delete fields.valuation;
+        else if (correctedValuation)
+            fields.valuation = correctedValuation;
         if (patch.paymentMethodId !== undefined && patch.paymentMethodId !== null)
             delete fields.paymentMethodLabel;
         if (source.value.aiParsed && Object.keys(patch).some(key => key !== "voided"))
@@ -192,6 +248,112 @@ export class LedgerCommands extends LedgerCommandValidation {
         if (!isPurchase && linkChanged)
             writes.push(...this.purchaseLocks(snapshot, [oldDetail?.refundOf, detail.refundOf].filter((id) => id !== undefined), context.operationId, Object.keys(patch).some(key => key !== "voided")));
         return this.#execute(context, snapshot, writes);
+    }
+    /** `today` is the caller's calendar date in the ledger reporting zone, as on the + path.
+     * New no-op edits are invalid-command; a retry already applied by this operation writes nothing. */
+    async correctRecord(context, eventId, input, today, localTimeZone = "UTC") {
+        if (this.options.capability?.().status === "read-only" || !this.options.outbox)
+            return rejected(context, "permission-denied");
+        if (!plainWithKeys(input, RECORD_CORRECTION_FIELDS) || !Object.keys(input).length || !isCalendarDate(today) ||
+            Object.hasOwn(input, "amountMinor") && (typeof input.amountMinor !== "number" || !Number.isSafeInteger(input.amountMinor) || input.amountMinor <= 0) ||
+            Object.hasOwn(input, "currency") && (!isCurrencyCode(input.currency) || !Object.hasOwn(input, "amountMinor")) ||
+            Object.hasOwn(input, "occurredOn") && (!isCalendarDate(input.occurredOn) || input.occurredOn > today))
+            return rejected(context, "invalid-object");
+        const rawIntent = Object.hasOwn(input, "twdIntent") ? input.twdIntent : { kind: "follow" };
+        if (!plainWithKeys(rawIntent, new Set(["kind", "twdMinor"])) ||
+            !["follow", "actual", "restore"].includes(rawIntent.kind) ||
+            (rawIntent.kind === "actual" ? typeof rawIntent.twdMinor !== "number" || !Number.isSafeInteger(rawIntent.twdMinor) || rawIntent.twdMinor <= 0
+                : Object.hasOwn(rawIntent, "twdMinor")))
+            return rejected(context, "invalid-object");
+        const intent = rawIntent;
+        const entered = input;
+        const snapshot = await this.options.store.read();
+        const ledger = validationLedger(snapshot);
+        const record = ledger.records.find(item => item.id === eventId);
+        if (!record)
+            return rejected(context, "invalid-object");
+        const available = recordCorrectionAvailability(record, ledger.records);
+        if ((entered.amountMinor !== undefined || entered.currency !== undefined || entered.twdIntent !== undefined) && !available.amount ||
+            entered.occurredOn !== undefined && !available.date)
+            return rejected(context, "invalid-object");
+        const timeZone = snapshotPreferences(snapshot, localTimeZone).reportingTimeZone;
+        const on = record.occurrence.precision === "date" ? record.occurrence.on : localDateOf(record.occurrence.at, timeZone);
+        const amountMinor = entered.amountMinor ?? record.amountMinor, currency = entered.currency ?? record.currency;
+        const amountChanged = amountMinor !== record.amountMinor, currencyChanged = currency !== record.currency;
+        const dateChanged = entered.occurredOn !== undefined && entered.occurredOn !== on;
+        const stated = sourceTwdValue(record.source, currency);
+        if (record.details?.operationId === context.operationId) {
+            if (amountChanged || currencyChanged || dateChanged)
+                return rejected(context, "invalid-command");
+            const value = record.valuation;
+            if (currency !== "TWD" && (intent.kind === "actual" && (value?.basis !== "actual" || value.origin !== undefined || value.twdMinor !== intent.twdMinor) ||
+                intent.kind === "restore" && (stated ? value !== null :
+                    entered.quote ? value?.basis !== "reference-rate" || !sameQuote(value, entered.quote) : value !== null)))
+                return rejected(context, "invalid-command");
+            return { status: "pending", operationId: context.operationId };
+        }
+        if (!amountChanged && !currencyChanged && !dateChanged && (intent.kind === "follow" || currency === "TWD"))
+            return rejected(context, "invalid-command");
+        const correction = { ...record.details?.correction };
+        if (entered.amountMinor !== undefined || entered.currency !== undefined) {
+            // Restoring source money removes redundant keys; a foreign restatement always includes its amount.
+            if (currency === record.source.currency) {
+                delete correction.currency;
+                if (amountMinor === record.source.amountMinor)
+                    delete correction.amountMinor;
+                else
+                    correction.amountMinor = amountMinor;
+            }
+            else {
+                correction.currency = currency;
+                correction.amountMinor = amountMinor;
+            }
+        }
+        if (entered.occurredOn !== undefined) {
+            delete correction.occurredAt;
+            correction.occurredOn = entered.occurredOn;
+        }
+        let valuation;
+        const patch = { correction: Object.keys(correction).length ? correction : null };
+        const supersedes = record.details?.valuation?.operationId;
+        const replacement = { currency, amountMinor, operationId: context.operationId, ...(supersedes ? { supersedes } : {}) };
+        try {
+            if (currency === "TWD") {
+                valuation = null;
+            }
+            else if (intent.kind === "actual") {
+                valuation = createActualValuation({ ...replacement, twdMinor: intent.twdMinor });
+            }
+            else if (intent.kind === "restore" || currencyChanged) {
+                valuation = null; // Discard the old currency's rate, value and actual origin.
+                if (!stated && entered.quote !== undefined) {
+                    if (!isReferenceQuote(entered.quote, currency, entered.occurredOn ?? on))
+                        return rejected(context, "invalid-valuation");
+                    valuation = createReferenceValuation({ ...entered.quote, ...replacement });
+                }
+            }
+            else if (amountChanged) {
+                if (record.valuation?.basis === "reference-rate") {
+                    valuation = createReferenceValuation({ ...record.valuation, ...replacement });
+                }
+                else if (record.valuation?.basis === "actual") {
+                    const previous = record.valuation;
+                    const origin = previous.origin ?? { amountMinor: previous.amountMinor, twdMinor: previous.twdMinor };
+                    valuation = createActualValuation({ ...replacement,
+                        twdMinor: proportionalMinor(origin.twdMinor, origin.amountMinor, amountMinor), origin });
+                }
+                else if (stated) {
+                    const origin = { amountMinor: record.amountMinor, twdMinor: stated.amountMinor,
+                        source: stated.basis === "actual" ? "stated-actual" : "stated-approximate" };
+                    valuation = createActualValuation({ ...replacement,
+                        twdMinor: proportionalMinor(origin.twdMinor, origin.amountMinor, amountMinor), origin });
+                }
+            }
+        }
+        catch {
+            return rejected(context, "invalid-valuation");
+        }
+        return this.at(snapshot).#editDetails(context, eventId, patch, valuation);
     }
     void(context, eventId) { return this.editDetails(context, eventId, { voided: true }); }
     /** Split creation and replacement are one detail patch; line identities are retained by the caller. */
@@ -870,4 +1032,9 @@ function plainWithKeys(value, keys) {
 }
 function rejected(context, code) {
     return { status: "rejected", operationId: context.operationId, code };
+}
+function sameQuote(value, quote) {
+    return value.currency === quote.currency && value.requestedOn === quote.requestedOn &&
+        value.effectiveOn === quote.effectiveOn && value.rate === quote.rate &&
+        value.provider === quote.provider && value.retrievedAt === quote.retrievedAt;
 }

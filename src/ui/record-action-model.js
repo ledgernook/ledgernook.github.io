@@ -1,3 +1,4 @@
+import { amountCorrectionInput } from "./amount-correction-model.js";
 import { clampedMonthDate, isCalendarDate, minorToDecimal, NOTES_LIMIT, resolveRecurringSchedule, SUBSCRIPTION_NOTE_LIMIT } from "../core/index.js";
 import { enteredMinor, refundableMinor, refundLinkInput, splitDraftState } from "../application/record-actions.js";
 import { recordDate } from "./ledger-format.js";
@@ -62,6 +63,8 @@ export function monthlyPlanInput(draft, record) {
 }
 export function canSaveRecordAction(action, draft, record, records, preview, recurringPreview = null, zone = "UTC") {
     switch (action) {
+        case "amount": return amountCorrectionInput(record, draft) !== null;
+        case "date": return isCalendarDate(draft.date);
         case "recat": return draft.categoryId !== null;
         case "note": return [...draft.notes.trim()].length <= NOTES_LIMIT;
         case "method": return draft.paymentMethodId !== null;
@@ -73,7 +76,7 @@ export function canSaveRecordAction(action, draft, record, records, preview, rec
         case "link": return refundLinkInput(record, records, draft.purchaseId, draft.originalAmount) !== null;
         case "inst": return preview !== null;
         case "proj": return [...draft.subscriptionNote.trim()].length <= SUBSCRIPTION_NOTE_LIMIT;
-        case "fx": return (enteredMinor(draft.twd, "TWD") ?? 0) > 0;
+        case "fx": return false;
         case "recur": return record.recurring || record.recurrence ? recurringPreview !== null && recurringRevisionInput(draft, record, draft.effectiveOn, zone) !== null : newRecurringPreview(draft, record, zone) !== null;
         case "occurrence-amount": return record.recurrence !== null && (enteredMinor(draft.occurrenceAmount, record.currency) ?? 0) > 0;
         case "occurrence-skip": return record.recurrence !== null;

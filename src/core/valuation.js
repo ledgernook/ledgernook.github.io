@@ -72,8 +72,10 @@ export class ValuationError extends Error {
         this.name = "ValuationError";
     }
 }
-const ACTUAL_KEYS = new Set(["basis", "currency", "amountMinor", "twdMinor", "operationId", "supersedes"]);
-const RATE_KEYS = new Set([...ACTUAL_KEYS, "rate", "provider", "requestedOn", "effectiveOn", "retrievedAt", "rounding"]);
+const VALUATION_KEYS = new Set(["basis", "currency", "amountMinor", "twdMinor", "operationId", "supersedes"]);
+const ACTUAL_KEYS = new Set([...VALUATION_KEYS, "origin"]);
+const RATE_KEYS = new Set([...VALUATION_KEYS, "rate", "provider", "requestedOn", "effectiveOn", "retrievedAt", "rounding"]);
+const ORIGIN_KEYS = new Set(["amountMinor", "twdMinor", "source"]);
 const isPositiveSafe = (value) => typeof value === "number" && Number.isSafeInteger(value) && value > 0;
 const isUuid = (value) => typeof value === "string" && UUID_PATTERN.test(value);
 /** Strict validator for a stored valuation; TWD records never carry one. Throws `ValuationError`. */
@@ -96,8 +98,34 @@ export function validateSavedValuation(value) {
         currency: item.currency, amountMinor: item.amountMinor, twdMinor: item.twdMinor,
         operationId: item.operationId, ...(Object.hasOwn(item, "supersedes") ? { supersedes: item.supersedes } : {}),
     };
-    if (item.basis === "actual")
-        return Object.freeze({ basis: "actual", ...base });
+    if (item.basis === "actual") {
+        if (!Object.hasOwn(item, "origin"))
+            return Object.freeze({ basis: "actual", ...base });
+        const origin = item.origin;
+        if (!isPlainObject(origin))
+            return fail();
+        if (!hasOnlyKeys(origin, ORIGIN_KEYS))
+            return fail();
+        if (Object.hasOwn(origin, "source") && origin.source !== "stated-actual" && origin.source !== "stated-approximate")
+            return fail();
+        const originAmountMinor = origin.amountMinor;
+        const originTwdMinor = origin.twdMinor;
+        if (!isPositiveSafe(originAmountMinor) || !isPositiveSafe(originTwdMinor))
+            return fail();
+        let expectedTwdMinor;
+        try {
+            expectedTwdMinor = proportionalMinor(originTwdMinor, originAmountMinor, base.amountMinor);
+        }
+        catch {
+            return fail();
+        }
+        if (expectedTwdMinor !== base.twdMinor)
+            return fail();
+        return Object.freeze({ basis: "actual", ...base, origin: Object.freeze({
+                amountMinor: originAmountMinor, twdMinor: originTwdMinor,
+                ...(Object.hasOwn(origin, "source") ? { source: origin.source } : {}),
+            }) });
+    }
     if (!isExchangeRate(item.rate) || typeof item.provider !== "string" || !STABLE_ID_PATTERN.test(item.provider) ||
         !isCalendarDate(item.requestedOn) || !isCalendarDate(item.effectiveOn) || item.effectiveOn > item.requestedOn ||
         !isCanonicalUtcInstant(item.retrievedAt) || item.rounding !== VALUATION_ROUNDING)
