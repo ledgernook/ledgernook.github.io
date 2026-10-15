@@ -9,7 +9,7 @@ export class ConnectionCapability {
             : input.evidence === "read-only" ? { status: "read-only", reason: "evidence-read-only" } : { status: "writable" };
     }
     get state() {
-        return !this.#ledgerRetained && !(this.#state.status === "read-only" && this.#state.reason === "demo-none")
+        return !this.#ledgerRetained && !(this.#state.status === "read-only" && ["demo-none", "credential-needed"].includes(this.#state.reason))
             ? { status: "read-only", reason: "ledger-not-retained" } : this.#state;
     }
     setLedgerRetention(retained) { this.#ledgerRetained = retained; }
@@ -25,5 +25,6 @@ export class ConnectionCapability {
     }
     observeBroaderAccess(broader) { this.#broaderAccess ||= broader; }
     recheck() { this.#state = { status: "writable" }; }
+    rejectCredential() { this.#state = { status: "read-only", reason: "credential-needed" }; this.#broaderAccess = false; }
     clear() { this.#state = { status: "read-only", reason: "demo-none" }; this.#broaderAccess = false; }
 }

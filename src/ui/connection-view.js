@@ -8,16 +8,12 @@ export function connectionView(model, skin) {
     const state = model.state;
     const element = el("div", undefined, "lk-connection");
     element.dataset.connectionScreen = state.screen;
-    if (state.screen === "welcome" || state.screen === "cleared") {
+    if (state.screen === "welcome") {
         element.classList.add("lk-welcome");
-        const cleared = state.screen === "cleared", intro = el("div", undefined, `lk-welcome-intro${cleared ? " lk-cleared-intro" : ""}`);
-        intro.append(skin.scene(skin.companion(cleared ? "gaze" : "idle", { scale: 1.1 }), { large: true }), el("h1", cleared ? "連線已清除" : "LedgerNook"), el("p", cleared ? state.notice ? "權杖已失效，請清除此網站的本機資料" : "權杖已失效，已清除連線與保留的帳本；待同步變更仍保留" : "帳本存在你的 GitHub 儲存庫"));
-        if (cleared)
-            intro.append(el("span", "GitHub 上的帳本不變", "lk-cleared-assurance"));
+        const intro = el("div", undefined, "lk-welcome-intro");
+        intro.append(skin.scene(skin.companion("idle", { scale: 1.1 }), { large: true }), el("h1", "LedgerNook"), el("p", "帳本存在你的 GitHub 儲存庫"));
         const actions = el("div", undefined, "lk-welcome-actions");
-        actions.append(textAction(cleared ? "重新連接" : "連接我的帳本", () => model.begin()), textAction("看示範", () => { void model.demo(); }, "secondary"));
-        if (!cleared)
-            actions.append(el("span", "示範使用合成資料", "lk-welcome-synthetic"));
+        actions.append(textAction("連接我的帳本", () => model.begin()), textAction("看示範", () => { void model.demo(); }, "secondary"), el("span", "示範使用合成資料", "lk-welcome-synthetic"));
         element.append(intro, actions);
     }
     else {
@@ -26,7 +22,7 @@ export function connectionView(model, skin) {
         back.classList.add("lk-edge-back");
         back.disabled = state.busy;
         header.append(back);
-        if (state.screen !== "declined")
+        if (state.screen !== "declined" && !model.replacement)
             header.append(el("span", `${state.screen === "token" ? 1 : state.screen === "repository" ? 2 : 3} / 3`, "lk-connection-step lk-number"));
         element.append(header);
         if (state.screen === "token")
@@ -48,7 +44,12 @@ export function connectionView(model, skin) {
 }
 function tokenView(element, model) {
     const state = model.state;
-    element.append(el("h1", "連接帳本"), el("p", "建議用 fine-grained 權杖，只開放帳本儲存庫", "lk-connection-copy"), el("p", "建議把帳本設為私人儲存庫", "lk-connection-copy"));
+    element.append(el("h1", model.replacement ? "更換權杖" : "連接帳本"));
+    if (model.replacement)
+        element.append(el("p", `${model.replacement.account}/${model.replacement.repository} · ${model.replacement.branch}`, "lk-connection-account"));
+    element.append(el("p", "建議用 fine-grained 權杖，只開放帳本儲存庫", "lk-connection-copy"));
+    if (!model.replacement)
+        element.append(el("p", "建議把帳本設為私人儲存庫", "lk-connection-copy"));
     const github = el("a", "在 GitHub 建立權杖", "lk-text-action lk-action-ink");
     github.href = viewerTokenCreationUrl();
     github.target = "_blank";

@@ -43,14 +43,12 @@ const catalog = new GitHubRepositoryCatalog((url, init) => fetch(url, init));
 const defaultPorts = { catalog, demo: () => createMonthlyDemo(bankDisplayName, clock), connect: openConnection, now: clock };
 let connectionPorts = defaultPorts;
 /** Injected ports are also used by synthetic journeys, with no alternative screen markup. */
-export function showWelcome(ports = defaultPorts, screen = "welcome", dataCleared = true) {
+export function showWelcome(ports = defaultPorts) {
     app?.dispose();
     connectionApp?.dispose();
     connectionPorts = ports;
     connectionApp = mountConnectionApp(root, { catalog: ports.catalog, connect: ports.connect,
-        demo: async () => { await startSession(await ports.demo(), ports.now, null, true); }, changed: () => { } }, nook, screen);
-    if (!dataCleared)
-        connectionApp.model.clearingFailed();
+        demo: async () => { await startSession(await ports.demo(), ports.now, null, true); }, changed: () => { } }, nook);
     return connectionApp.model;
 }
 /** One injectable composition root for device sessions and deterministic synthetic captures. */
@@ -69,7 +67,7 @@ export function startSession(session, now = clock, lastOpenedAt, demoJourney = f
                 void session.disconnect();
                 showWelcome(connectionPorts);
             } } : {}),
-        connectionCleared: dataCleared => showWelcome(connectionPorts, "cleared", dataCleared),
+        repositoryCatalog: connectionPorts.catalog,
         history: (result, id) => {
             const source = result.sourcePaths[id];
             if (!source || !session.owner || !session.repo || session.kind === "demo")

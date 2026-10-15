@@ -43,7 +43,3 @@
 .lk-welcome-intro p { color: var(--ink2); font: 400 14px/1.7 var(--f-ui); max-width: 280px; text-wrap: pretty; }
 .lk-welcome-actions { display: flex; flex-direction: column; gap: 10px; }
 .lk-welcome-synthetic { text-align: center; font: 400 12px var(--f-ui); color: var(--mute); }
-.lk-cleared-intro { gap: 14px; }
-.lk-cleared-intro h1 { font-size: 20px; }
-.lk-cleared-intro p { max-width: 300px; }
-.lk-cleared-assurance { font: 500 13px var(--f-ui); }

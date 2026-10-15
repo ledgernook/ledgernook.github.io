@@ -11,6 +11,8 @@ import { el } from "./dom.js";
 import { button } from "./shared-controls.js";
 function confirmed(result) { return result.status === "confirmed" || result.status === "pending"; }
 export function recordFailure(result, action) {
+    if (result.status === "rejected" && result.code === "credential-rejected")
+        return "權杖已失效，草稿已保留 · 請更換權杖";
     if (result.status === "rejected" && ["permission-denied", "write-denied"].includes(result.code))
         return "目前唯讀，草稿已保留";
     if (result.status === "rejected" && result.code === "incomplete-coverage")
@@ -228,6 +230,7 @@ export async function openRecordAction(host, action, record, result, directDate)
                 return;
             if (outcome.status === "rejected" && outcome.code === "credential-rejected") {
                 await host.afterFailure?.(outcome);
+                update({ busy: false, message: recordFailure(outcome, action) });
                 return;
             }
             if (confirmed(outcome)) {
@@ -319,6 +322,9 @@ export async function showVoidConfirmation(host, record, element, result, cancel
                 expectedObjects: path && result.detailObjectIds ? { [path]: result.detailObjectIds[record.id] ?? null } : {} }, record.id);
             if (outcome.status === "rejected" && outcome.code === "credential-rejected") {
                 await host.afterFailure?.(outcome);
+                message.textContent = recordFailure(outcome);
+                busy = false;
+                cancel.disabled = false;
                 return;
             }
             if (confirmed(outcome)) {

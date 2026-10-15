@@ -8,7 +8,7 @@ const REJECTIONS = Object.freeze({
     "path-not-allowed": "這項變更無法儲存 · 回到 LedgerNook 使用可用的功能",
     "permission-denied": "目前唯讀，變更沒存入，草稿還在 · 開啟寫入權限後再儲存",
     "write-denied": "權杖沒有寫入權限，已切換為唯讀，草稿還在 · 換用可寫入的權杖再儲存",
-    "credential-rejected": "GitHub 拒絕了權杖，已清除記住的權杖和本機帳本 · 重新連線後再試",
+    "credential-rejected": "GitHub 拒絕了權杖，帳本與待同步變更都保留 · 更換權杖後再試",
     "incomplete-coverage": "帳本歷史尚未完整，變更沒有送出 · 先同步完成，再重試",
     "invalid-valuation": "金額、幣別或匯率無法換算，還沒儲存 · 檢查金額與幣別後再試",
     "rate-unavailable": "找不到這一天或更早的匯率 · 稍後再試或輸入實際台幣金額",

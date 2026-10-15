@@ -1,6 +1,6 @@
 # Published LedgerNook viewer
 
-- Product commit: cc2ed52a926fb6be18b7cfcf15fc2ec83097ceb1
-- Build ID: 70324f456a791fec08ee
+- Product commit: 0f82b0c178ac755e3ed162ca40ce32b460a8b5b1
+- Build ID: 16d1e7fda01714d06656
 - Local schema version: 1
-- Published at (UTC): 2026-10-14T13:40:28.158Z
+- Published at (UTC): 2026-10-15T11:12:27.220Z

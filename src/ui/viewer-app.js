@@ -35,6 +35,8 @@ import { createReportFeature } from "./report-feature.js";
 import { coverageDisclosure, synchronizationStatus } from "./states-model.js";
 import { isAutomaticCaptureRecord } from "./record-list-model.js";
 import { syncRecoveryCopy } from "./sync-recovery-copy.js";
+import { ConnectionModel } from "./connection-model.js";
+import { connectionView } from "./connection-view.js";
 const SYNC_OPERATION_TIMEOUT_MS = 120_000;
 /** In-memory identity state for records that arrived or were saved during this session. */
 export class FreshRecordTracker {
@@ -151,7 +153,7 @@ export function mountViewerApp(root, session, options) {
                 return;
             if (outcome.status === "credential-rejected") {
                 historyContinuationPending = false;
-                await clearRejectedConnection();
+                await requireCredential();
                 return;
             }
             pendingCountVisible = outcome.status === "temporary" || outcome.status === "write-denied";
@@ -292,7 +294,7 @@ export function mountViewerApp(root, session, options) {
             notificationAttempts.delete(key);
         }
         else if (outcome.status === "rejected" && outcome.code === "credential-rejected") {
-            await clearRejectedConnection();
+            await requireCredential();
             return;
         }
         else {
@@ -362,24 +364,34 @@ export function mountViewerApp(root, session, options) {
         syncGeneration++;
         activeSyncOperation?.abort();
     }
-    let clearing = false;
-    async function clearRejectedConnection() {
-        if (clearing || disposed)
+    let requiringCredential = false;
+    async function requireCredential() {
+        if (requiringCredential || disposed)
             return;
-        clearing = true;
-        let dataCleared = true;
-        if (!session.outbox) {
-            try {
-                await session.forget();
-            }
-            catch {
-                dataCleared = false;
-            }
+        requiringCredential = true;
+        try {
+            session.rejectCredential?.();
+            firstLoad = false;
+            routineBackgroundSync = false;
+            synchronization = "failed";
+            pendingCountVisible = true;
+            historyContinuationPending = false;
+            clearTimeout(historyTimer);
+            historyTimer = undefined;
+            await refresh();
+            if (readOnlySheetOpen)
+                openReadOnlyReasonSheet();
+            options.credentialRejected?.();
         }
-        if (!disposed)
-            options.connectionCleared?.(dataCleared);
+        finally {
+            requiringCredential = false;
+        }
     }
     const shell = createAppShell(nook, { selectTab: value => {
+            if (value === "add" && session.capability.status === "read-only" && session.capability.reason === "credential-needed") {
+                showReadOnlyReason();
+                return;
+            }
             if (openedRecord) {
                 closeRecord();
                 if (openedRecord)
@@ -414,6 +426,7 @@ export function mountViewerApp(root, session, options) {
                 return;
         } clearOpenedRecord(); clearMethodSpending(); clearProjectCategoryFilter(); recordsRoute = false; reports.leave(); settingPages.leave(); settings = true; tab = "settings"; render(); }, readOnlyReason: showReadOnlyReason, leave: pushOnLeave }, { tab, status: { text: "", icon: "cloud_done" }, readOnly: session.capability.status === "read-only" });
     const settingPages = createSettingsFeature(session, shell, { push: pushOnLeave, recover: (operationId, action) => { void recoverSetting(operationId, action); }, now: options.now, operationId: options.operationId,
+        credentialRejected: requireCredential,
         buildId: options.buildId ?? "development", flush: () => pushScheduler.immediate(), ...(options.programReset ? { programReset: options.programReset } : {}),
         current: () => ({ result, preferences, picker, organization, failedSettings }), render, refresh, changePreferences,
         open: id => {
@@ -520,6 +533,10 @@ export function mountViewerApp(root, session, options) {
             showReadOnlyReason();
             return;
         }
+        if (route === "replace-token") {
+            replaceCredential();
+            return;
+        }
         const element = el("div", undefined, "lk-feature-view");
         element.dataset.placeholderRoute = route;
         element.append(el("p", "此功能尚未開放", "lk-muted"));
@@ -535,7 +552,41 @@ export function mountViewerApp(root, session, options) {
         if (readOnlySheetOpen)
             shell.sheets.pop();
         readOnlySheetOpen = true;
-        shell.sheets.push({ title: "唯讀", swipe: "close", origin: "top", view: readOnlyReasonView(readOnlyCheck, () => { void recheckWriteCapability(); }, session.capability), close: closeReadOnlyReason });
+        shell.sheets.push({ title: "唯讀", swipe: "close", origin: "top", view: readOnlyReasonView(readOnlyCheck, () => { void recheckWriteCapability(); }, session.capability, replaceCredential), close: closeReadOnlyReason });
+    }
+    let replacementModel;
+    function replaceCredential() {
+        if (!options.repositoryCatalog || !session.replaceCredential)
+            return;
+        if (readOnlySheetOpen)
+            closeReadOnlyReason();
+        const element = el("div", undefined, "lk-connection-content");
+        const dispose = () => { model.dispose(); if (replacementModel === model)
+            replacementModel = undefined; };
+        const close = () => { dispose(); shell.sheets.pop(); };
+        const model = replacementModel = new ConnectionModel({ catalog: options.repositoryCatalog, demo: async () => { }, cancel: close,
+            changed: () => {
+                const active = document.activeElement;
+                const focused = active instanceof HTMLInputElement && element.contains(active);
+                const start = focused ? active.selectionStart : null, end = focused ? active.selectionEnd : null;
+                element.replaceChildren(connectionView(model, nook).element);
+                if (focused) {
+                    const input = element.querySelector("input");
+                    input?.focus();
+                    if (start !== null && end !== null)
+                        input?.setSelectionRange(start, end);
+                }
+            },
+            connect: async (connection) => {
+                session.replaceCredential(connection);
+                close();
+                await refresh();
+                await sync(true, false);
+                await pushScheduler.immediate();
+            },
+        }, { account: session.owner, repository: session.repo, branch: session.branch });
+        element.append(connectionView(model, nook).element);
+        shell.sheets.push({ title: "更換權杖", swipe: "close", origin: "top", view: { element, dispose }, close });
     }
     function closeReadOnlyReason() {
         readOnlyCheck = "idle";
@@ -712,7 +763,7 @@ export function mountViewerApp(root, session, options) {
         onCapabilityChange(listener) { capabilityListeners.add(listener); return () => { capabilityListeners.delete(listener); }; },
         async afterFailure(outcome) {
             if (outcome.status === "rejected" && outcome.code === "credential-rejected")
-                await clearRejectedConnection();
+                await requireCredential();
             else
                 await refresh();
         },
@@ -747,7 +798,7 @@ export function mountViewerApp(root, session, options) {
                 await recordMutationHost.afterWrite(false, "");
             }
             else if (outcome.status === "rejected" && outcome.code === "credential-rejected") {
-                await clearRejectedConnection();
+                await requireCredential();
             }
             else
                 recordConfirmationError = { recordId: id, text: recordFailure(outcome) };
@@ -1159,7 +1210,8 @@ export function mountViewerApp(root, session, options) {
             return;
         const confirmed = new Set(outcomes.filter(item => item.result.status === "confirmed" || item.result.status === "pending").map(item => item.eventId));
         if (outcomes.some(item => item.result.status === "rejected" && item.result.code === "credential-rejected")) {
-            await clearRejectedConnection();
+            batch.busy = false;
+            await requireCredential();
             return;
         }
         batch.busy = false;
@@ -1947,7 +1999,10 @@ export function mountViewerApp(root, session, options) {
             return;
         message = describeResult(outcome).text;
         if (outcome.status === "rejected" && outcome.code === "credential-rejected") {
-            await clearRejectedConnection();
+            saveState = "failed";
+            manualLocked = false;
+            await retainManualDraft();
+            await requireCredential();
             return;
         }
         if (outcome.status === "confirmed" || outcome.status === "pending") {
@@ -1975,6 +2030,13 @@ export function mountViewerApp(root, session, options) {
     async function sync(manual = true, pushPending = manual, keepCompanionSteady = false, abandonBusy = manual) {
         if (disposed)
             return;
+        if (session.capability.status === "read-only" && session.capability.reason === "credential-needed") {
+            firstLoad = false;
+            synchronization = "failed";
+            pendingCountVisible = true;
+            render();
+            return;
+        }
         if (historyRoundRunning || activeSyncOperation?.current) {
             historyContinuationPending = true;
             synchronization = "syncing";
@@ -2039,7 +2101,7 @@ export function mountViewerApp(root, session, options) {
                     historyRemaining = Infinity;
                     historyRetries = 0;
                     historyContinuationPending = false;
-                    await clearRejectedConnection();
+                    await requireCredential();
                     return;
                 }
                 if (outcomes.some(item => item.status === "offline"))
@@ -2160,7 +2222,7 @@ export function mountViewerApp(root, session, options) {
             void searchRecords(recordsQuery);
         void refresh();
     });
-    const unsubscribeCleared = session.onConnectionCleared?.(dataCleared => options.connectionCleared?.(dataCleared));
+    const unsubscribeRejected = session.onCredentialRejected?.(() => { void requireCredential(); });
     // Show the local snapshot first, then let the existing synchronizer fill a newly connected ledger.
     let freshRecordsReady = false;
     const ready = refresh().then(async () => {
@@ -2182,6 +2244,6 @@ export function mountViewerApp(root, session, options) {
             document.removeEventListener("visibilitychange", onVisibilityChange); if (observesPageHide && typeof window.removeEventListener === "function")
             window.removeEventListener("pagehide", onPageHide); if (observesPageShow && typeof window.removeEventListener === "function")
             window.removeEventListener("pageshow", onPageShow); clearTimeout(organizationTimer); clearTimeout(historyTimer); tripSheetOpen = false; refreshRevision++; recordsSearchRevision++; reports.dispose(); settingPages.dispose(); if (companionTimer !== undefined)
-            clearTimeout(companionTimer); unsubscribe?.(); unsubscribeCleared?.(); if (observesNetworkOnline && typeof window.removeEventListener === "function")
+            clearTimeout(companionTimer); unsubscribe?.(); unsubscribeRejected?.(); replacementModel?.dispose(); if (observesNetworkOnline && typeof window.removeEventListener === "function")
             window.removeEventListener("online", onNetworkOnline); shell.dispose(); session.release(); } };
 }

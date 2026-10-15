@@ -18,8 +18,12 @@ export class ConnectionModel {
     #state;
     constructor(ports, screen = "welcome") {
         this.ports = ports;
-        this.#state = { screen, inspection: null, repository: "", branch: "", showPublicRepositories: false, advanced: false, busy: false, notice: "", broad: false };
+        this.replacement = typeof screen === "object" ? screen : undefined;
+        this.#state = { screen: typeof screen === "object" ? "token" : screen, inspection: null,
+            repository: this.replacement ? `${this.replacement.account}/${this.replacement.repository}` : "", branch: this.replacement?.branch ?? "",
+            showPublicRepositories: false, advanced: false, busy: false, notice: "", broad: false };
     }
+    replacement;
     get state() { return this.#state; }
     get token() { return this.#token; }
     get selection() { return selectRepository(this.#state.inspection ?? { status: "unavailable" }, this.#state.repository, this.#state.branch); }
@@ -30,7 +34,6 @@ export class ConnectionModel {
         this.ports.changed();
     }
     begin() { this.#update({ screen: "token", notice: "" }); }
-    clearingFailed() { this.#update({ notice: "無法清除本機資料；請在瀏覽器網站資料設定中清除此網站資料" }); }
     setToken(value) {
         if (this.#disposed)
             return;
@@ -41,6 +44,10 @@ export class ConnectionModel {
     back() {
         if (this.#state.busy)
             return;
+        if (this.replacement) {
+            this.ports.cancel?.();
+            return;
+        }
         const screen = this.#state.screen;
         this.#revision++;
         if (screen === "token" && !this.#state.broad) {
@@ -58,6 +65,18 @@ export class ConnectionModel {
         const inspection = await inspectTokenRepositories(this.ports.catalog, this.#token.trim());
         if (this.#disposed || revision !== this.#revision)
             return;
+        if (this.replacement && (inspection.status === "ready" || inspection.status === "broad-access")) {
+            const ledger = this.replacement;
+            const repository = inspection.repositories.find(item => item.owner.toLowerCase() === ledger.account.toLowerCase() && item.name.toLowerCase() === ledger.repository.toLowerCase());
+            if (!repository || selectRepository(inspection, repository.fullName, ledger.branch).status !== "selected") {
+                this.#update({ busy: false, notice: "這個權杖無法存取目前帳本，請使用同一帳本的權杖；要改用其他帳本，請先在 設定 › 這台裝置 忘記這台裝置的資料" });
+                return;
+            }
+            this.#update({ inspection, broad: inspection.status === "broad-access", busy: false });
+            if (inspection.status === "ready")
+                await this.#replace();
+            return;
+        }
         if (inspection.status === "ready" || inspection.status === "broad-access") {
             const firstPrivateRepository = inspection.repositories.find(repository => repository.isPrivate);
             this.#update({ inspection, busy: false, broad: inspection.status === "broad-access",
@@ -70,9 +89,29 @@ export class ConnectionModel {
             this.#update({ inspection, busy: false, notice });
         }
     }
-    redo() { this.setToken(""); this.#update({ screen: "token", repository: "", branch: "" }); }
-    continueBroad() { if (this.#state.broad)
-        this.#update({ screen: "repository", broad: false }); }
+    async #replace() {
+        if (!this.replacement || this.#disposed)
+            return;
+        this.#update({ busy: true, notice: "" });
+        try {
+            await this.ports.connect({ ...this.replacement, token: this.#token.trim() }, false);
+            this.#token = "";
+        }
+        catch {
+            this.#update({ busy: false, notice: "無法更換權杖，帳本與待同步變更都保留" });
+        }
+    }
+    redo() { this.setToken(""); this.#update({ screen: "token", ...(this.replacement ? {} : { repository: "", branch: "" }) }); }
+    continueBroad() {
+        if (!this.#state.broad)
+            return;
+        if (this.replacement) {
+            this.#update({ broad: false });
+            void this.#replace();
+        }
+        else
+            this.#update({ screen: "repository", broad: false });
+    }
     chooseRepository(repository) {
         this.#update({ repository, branch: "", notice: "" });
     }

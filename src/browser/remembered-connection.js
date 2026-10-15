@@ -19,12 +19,13 @@ export function createRememberedConnection(storage) {
                 if (!value || typeof value !== "object" || Array.isArray(value))
                     throw new Error();
                 const entry = value;
-                if (Object.keys(entry).sort().join(",") !== "account,branch,repository,token,writeDenied" ||
+                if (!["account,branch,repository,token,writeDenied", "account,branch,repository,writeDenied"].includes(Object.keys(entry).sort().join(",")) ||
                     typeof entry.writeDenied !== "boolean" ||
-                    ![entry.account, entry.repository, entry.branch, entry.token].every(item => typeof item === "string" && item.trim()))
+                    ![entry.account, entry.repository, entry.branch].every(item => typeof item === "string" && item.trim()) ||
+                    ("token" in entry && (typeof entry.token !== "string" || !entry.token.trim())))
                     throw new Error();
                 return { account: entry.account.trim(), repository: entry.repository.trim(),
-                    branch: entry.branch.trim(), token: entry.token.trim(), writeDenied: entry.writeDenied };
+                    branch: entry.branch.trim(), ...(typeof entry.token === "string" ? { token: entry.token.trim() } : {}), writeDenied: entry.writeDenied };
             }
             catch {
                 clear();

@@ -180,7 +180,8 @@ export function createSettingsFeature(session, shell, options) {
                 await options.refresh();
             }
             else if (outcome.status === "rejected" && outcome.code === "credential-rejected") {
-                notify("連線已失效，請重新連接");
+                await options.credentialRejected?.();
+                notify("權杖已失效，請更換權杖");
             }
             else {
                 failed?.();
@@ -331,7 +332,9 @@ export function createSettingsFeature(session, shell, options) {
                 }
                 else {
                     selected = previous;
-                    error = outcome.status === "rejected" && outcome.code === "credential-rejected" ? "連線已失效，請重新連接" : "沒存到，修改還在";
+                    if (outcome.status === "rejected" && outcome.code === "credential-rejected")
+                        await options.credentialRejected?.();
+                    error = outcome.status === "rejected" && outcome.code === "credential-rejected" ? "權杖已失效，請更換權杖" : "沒存到，修改還在";
                 }
             }
             catch {
@@ -624,9 +627,11 @@ export function createSettingsFeature(session, shell, options) {
                     methodOrderBusy = true;
                     try {
                         const outcome = await changePaymentMethods(patch.paymentMethods);
+                        if (outcome?.code === "credential-rejected")
+                            await options.credentialRejected?.();
                         if (!disposed && !["confirmed", "pending"].includes(outcome?.status ?? "")) {
                             feedback = outcome?.status === "conflict" ? "帳本已變更，請重新開啟確認"
-                                : outcome?.code === "credential-rejected" ? "連線已失效，請重新連接" : "偏好未儲存";
+                                : outcome?.code === "credential-rejected" ? "權杖已失效，請更換權杖" : "偏好未儲存";
                         }
                     }
                     catch {

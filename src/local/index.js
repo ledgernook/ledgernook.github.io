@@ -1,15 +1,20 @@
 import { assembleEffectiveLedger, defaultUserRulesDocument, validateLedgerObjectAtPath } from "../core/index.js";
-import { afterConfirmedWrite, LocalSnapshotError } from "../application/sync.js";
+import { afterConfirmedWrite, LOCAL_OBJECT_REFETCH, LocalSnapshotError } from "../application/sync.js";
 import { OUTBOX_DRAFT_KEY } from "../application/outbox.js";
 import { viewerResultCacheKey } from "../application/viewer-query.js";
+import { DATABASE_MIGRATIONS, DB_VERSION } from "./migrations.js";
 export * from "./outbox.js";
 export { MemorySnapshotStore } from "./memory.js";
 export const LOCAL_SCHEMA_VERSION = "1";
 export const LOCAL_CALCULATION_VERSION = "2";
-const DB_VERSION = 2;
 const SOURCE_KEY = /^events\/v1\/\d{4}\/(?:0[1-9]|1[0-2])\/([0-9a-f-]+)\.json$/;
 const DETAIL_KEY = /^details\/v1\/\d{4}\/(?:0[1-9]|1[0-2])\/([0-9a-f-]+)\.json$/;
 const EMPTY = Object.freeze({ cursor: null, coverage: { complete: false, missing: ["initial"] }, objects: [] });
+function pendingRefetchCoverage(missing) {
+    const markers = missing.filter(path => path.startsWith(LOCAL_OBJECT_REFETCH));
+    const paths = markers.map(marker => marker.slice(LOCAL_OBJECT_REFETCH.length) || "preferences.json");
+    return [...new Set([...markers, ...paths])];
+}
 export function namespaceKey(scope) {
     if (!scope.origin || !scope.connectionId || !scope.repositoryId || !scope.branch)
         throw new TypeError("Incomplete namespace");
@@ -89,6 +94,8 @@ export class IndexedDbSnapshotStore {
     schemaVersion;
     calculationVersion;
     localTimeZone;
+    migrations;
+    databaseVersion;
     database;
     /** Last validated state with its publication revision; reused only while the stored revision is unchanged. */
     cached;
@@ -99,38 +106,43 @@ export class IndexedDbSnapshotStore {
             throw new LocalSnapshotError("denied");
         this.factory = options.factory ?? indexedDB;
         this.databaseName = options.databaseName ?? "ledgernook-local";
-        this.schemaVersion = options.schemaVersion ?? "1";
+        this.schemaVersion = options.schemaVersion ?? LOCAL_SCHEMA_VERSION;
         this.calculationVersion = options.calculationVersion ?? LOCAL_CALCULATION_VERSION;
+        this.migrations = [...DATABASE_MIGRATIONS, ...(options.migrations ?? [])];
+        let previous = 0;
+        for (const migration of this.migrations) {
+            if (!Number.isSafeInteger(migration.version) || migration.version <= previous)
+                throw new TypeError("Unordered database migrations");
+            previous = migration.version;
+        }
+        this.databaseVersion = Math.max(DB_VERSION, previous);
     }
     open() {
         if (!this.database)
             this.database = new Promise((resolve, reject) => {
                 let request;
                 try {
-                    request = this.factory.open(this.databaseName, DB_VERSION);
+                    request = this.factory.open(this.databaseName, this.databaseVersion);
                 }
                 catch (error) {
                     reject(failure(error));
                     return;
                 }
-                request.onupgradeneeded = () => {
-                    const db = request.result;
-                    const objects = db.objectStoreNames.contains("objects") ? request.transaction.objectStore("objects") : db.createObjectStore("objects", { keyPath: "key" });
-                    if (!objects.indexNames.contains("namespace"))
-                        objects.createIndex("namespace", "namespace");
-                    for (const field of ["effectiveDate", "project", "category", "subscription"]) {
-                        if (!objects.indexNames.contains(field))
-                            objects.createIndex(field, ["namespace", field]);
+                request.onupgradeneeded = event => {
+                    try {
+                        for (const migration of this.migrations)
+                            if (migration.version > event.oldVersion)
+                                migration.migrate(request.result, request.transaction);
                     }
-                    if (!db.objectStoreNames.contains("snapshots"))
-                        db.createObjectStore("snapshots", { keyPath: "namespace" });
-                    if (!db.objectStoreNames.contains("views"))
-                        db.createObjectStore("views", { keyPath: "namespace" });
-                    const drafts = db.objectStoreNames.contains("drafts") ? request.transaction.objectStore("drafts") : db.createObjectStore("drafts", { keyPath: "key" });
-                    if (!drafts.indexNames.contains("namespace"))
-                        drafts.createIndex("namespace", "namespace");
+                    catch {
+                        request.transaction.abort();
+                    }
                 };
-                request.onsuccess = () => resolve(request.result);
+                request.onsuccess = () => {
+                    const db = request.result;
+                    db.onversionchange = () => { db.close(); this.database = undefined; this.cached = undefined; };
+                    resolve(db);
+                };
                 request.onerror = () => reject(failure(request.error));
                 request.onblocked = () => reject(new LocalSnapshotError("denied"));
             });
@@ -150,14 +162,24 @@ export class IndexedDbSnapshotStore {
                 result(tx.objectStore("objects").get(`${this.namespace}\u0000preferences.json`)),
             ]);
             await done;
-            if (!meta || meta.schemaVersion !== this.schemaVersion || meta.calculationVersion !== this.calculationVersion)
+            if (!meta)
                 return EMPTY;
             const objects = [];
-            if (row) {
-                const object = validateLedgerObjectAtPath(row.path, row.object.value);
-                if (object.kind !== "preferences" || row.object.kind !== object.kind || !/^[0-9a-f]{40}$/.test(row.object.objectId))
-                    throw new LocalSnapshotError("invalid-data");
-                objects.push(Object.freeze({ ...object, objectId: row.object.objectId }));
+            let invalid = false;
+            try {
+                if (row) {
+                    const object = validateLedgerObjectAtPath(row.path, row.object.value);
+                    if (object.kind !== "preferences" || row.object.kind !== object.kind || !/^[0-9a-f]{40}$/.test(row.object.objectId))
+                        throw Error();
+                    objects.push(Object.freeze({ ...object, objectId: row.object.objectId }));
+                }
+            }
+            catch {
+                invalid = true;
+            }
+            if (invalid || meta.schemaVersion !== this.schemaVersion || meta.calculationVersion !== this.calculationVersion) {
+                const snapshot = await this.read();
+                return Object.freeze({ ...snapshot, objects: Object.freeze(snapshot.objects.filter(object => object.kind === "preferences")) });
             }
             return Object.freeze({ cursor: meta.cursor, coverage: meta.coverage, objects: Object.freeze(objects), ...(meta.revision ? { revision: meta.revision } : {}) });
         }
@@ -181,32 +203,73 @@ export class IndexedDbSnapshotStore {
                 if (this.cached === cached)
                     this.cached = undefined;
             }
-            const tx = db.transaction(["objects", "snapshots"], "readonly");
-            const done = completed(tx);
-            const metaPromise = result(tx.objectStore("snapshots").get(this.namespace));
-            const rowsPromise = result(tx.objectStore("objects").index("namespace").getAll(this.namespace));
-            const [meta, rows] = await Promise.all([metaPromise, rowsPromise]);
-            await done;
-            if (meta && (meta.schemaVersion !== this.schemaVersion || meta.calculationVersion !== this.calculationVersion)) {
-                await this.clearNamespace();
-                return { snapshot: EMPTY, trees: [], covered: [], knownMonths: [] };
-            }
-            const objects = rows.map(row => {
-                try {
-                    const value = validateLedgerObjectAtPath(row.path, row.object.value);
-                    if (value.kind !== row.object.kind || !/^[0-9a-f]{40}$/.test(row.object.objectId))
-                        throw Error();
-                    return Object.freeze({ ...value, objectId: row.object.objectId });
+            const fetchRows = async (tx) => {
+                const metaPromise = result(tx.objectStore("snapshots").get(this.namespace));
+                const rowsPromise = result(tx.objectStore("objects").index("namespace").getAll(this.namespace));
+                const [meta, rows] = await Promise.all([metaPromise, rowsPromise]);
+                return { meta, rows };
+            };
+            const validateRows = (rows) => {
+                const objects = [], rejected = [];
+                for (const row of rows) {
+                    try {
+                        const value = validateLedgerObjectAtPath(row.path, row.object.value);
+                        if (value.kind !== row.object.kind || !/^[0-9a-f]{40}$/.test(row.object.objectId))
+                            throw Error();
+                        objects.push(Object.freeze({ ...value, objectId: row.object.objectId }));
+                    }
+                    catch {
+                        rejected.push(row);
+                    }
                 }
-                catch {
-                    throw new LocalSnapshotError("invalid-data");
-                }
-            });
-            const state = {
+                return { objects, rejected };
+            };
+            const needsRepair = (meta, rejected) => rejected.length > 0 ||
+                Boolean(meta && (meta.schemaVersion !== this.schemaVersion || meta.calculationVersion !== this.calculationVersion));
+            const makeState = (meta, objects) => ({
                 snapshot: Object.freeze({ cursor: meta?.cursor ?? null, coverage: meta?.coverage ?? EMPTY.coverage,
                     objects: Object.freeze(objects), ...(meta?.revision ? { revision: meta.revision } : {}) }),
                 trees: meta?.trees ?? [], covered: meta?.covered ?? [], knownMonths: meta?.knownMonths ?? [],
-            };
+            });
+            const readTx = db.transaction(["objects", "snapshots"], "readonly");
+            const readDone = completed(readTx);
+            const initial = await fetchRows(readTx);
+            await readDone;
+            let { meta } = initial;
+            let { objects, rejected } = validateRows(initial.rows);
+            if (needsRepair(meta, rejected)) {
+                // Re-read inside the write transaction so a publication between inspection and repair is preserved.
+                const tx = db.transaction(["objects", "snapshots", "views"], "readwrite");
+                const done = completed(tx);
+                const current = await fetchRows(tx);
+                meta = current.meta;
+                ({ objects, rejected } = validateRows(current.rows));
+                if (needsRepair(meta, rejected)) {
+                    const directories = new Set(rejected.map(row => {
+                        const path = typeof row.path === "string" ? row.path : row.key.slice(this.namespace.length + 1);
+                        return path.slice(0, Math.max(0, path.lastIndexOf("/")));
+                    }));
+                    const indexes = indexRows(objects), store = tx.objectStore("objects");
+                    for (const row of rejected)
+                        store.delete(row.key);
+                    for (const object of objects)
+                        store.put({ key: `${this.namespace}\u0000${object.path}`, namespace: this.namespace,
+                            path: object.path, object, ...indexes.get(object.path) });
+                    const preference = objects.find(object => object.kind === "preferences");
+                    const coverage = meta?.coverage ?? EMPTY.coverage;
+                    meta = { ...meta, namespace: this.namespace, schemaVersion: this.schemaVersion, calculationVersion: this.calculationVersion,
+                        cursor: meta?.cursor ?? null, coverage: rejected.length ? { ...coverage, complete: false,
+                            missing: [...new Set([...coverage.missing, ...[...directories].flatMap(path => [`${LOCAL_OBJECT_REFETCH}${path}`, path || "preferences.json"])])],
+                            ...(directories.has("") ? { preferencesLoaded: false } : {}) } : coverage,
+                        trees: (meta?.trees ?? []).filter(tree => !directories.has(tree.path)),
+                        covered: (meta?.covered ?? []).filter(path => !directories.has(path)), knownMonths: meta?.knownMonths ?? [],
+                        reportingTimeZone: preference?.kind === "preferences" ? preference.value.reportingTimeZone : null, revision: newRevision() };
+                    tx.objectStore("snapshots").put(meta);
+                    tx.objectStore("views").delete(this.namespace);
+                }
+                await done;
+            }
+            const state = makeState(meta, objects);
             if (meta?.revision)
                 this.cached = { revision: meta.revision, state };
             return state;
@@ -225,7 +288,8 @@ export class IndexedDbSnapshotStore {
             return "stale-cursor";
         }
         return this.publishSync({ ...publication, ...afterConfirmedWrite(state, publication),
-            coverage: state.snapshot.coverage.complete ? state.snapshot.coverage : { complete: false, missing: ["mutation-refresh"] } });
+            coverage: state.snapshot.coverage.complete ? state.snapshot.coverage : { complete: false,
+                missing: ["mutation-refresh", ...pendingRefetchCoverage(state.snapshot.coverage.missing)] } });
     }
     async markMutationRefresh(expectedCommit) {
         const db = await this.open();
@@ -242,7 +306,8 @@ export class IndexedDbSnapshotStore {
             return;
         }
         const revision = newRevision();
-        snapshots.put({ ...existing, coverage: { complete: false, missing: ["mutation-refresh"] }, revision });
+        snapshots.put({ ...existing, coverage: { complete: false,
+                missing: ["mutation-refresh", ...pendingRefetchCoverage(existing.coverage.missing)] }, revision });
         tx.objectStore("views").delete(this.namespace);
         this.cached = undefined;
         await done;

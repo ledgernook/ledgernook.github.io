@@ -29,6 +29,8 @@ export function settingsView(session, result, preferences, status, trip, actions
         reason.append(label, el("span", readOnlyReasonCopy(session.capability), "lk-settings-readonly-copy"));
         if (session.capability.reason === "ledger-not-retained")
             reason.append(button("開啟保留帳本", () => actions.later("6i"), "lk-settings-recheck"));
+        else if (session.capability.reason === "credential-needed")
+            reason.append(button("更換權杖", () => actions.later("replace-token"), "lk-settings-recheck"));
         else
             reason.append(button("重新檢查寫入權限", () => actions.later("6p"), "lk-settings-recheck"));
         connection.append(reason);

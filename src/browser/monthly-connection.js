@@ -73,6 +73,7 @@ async function clearRetained(scope) {
 /** Browser composition adapter: IndexedDB (only with consent), local query and incremental sync. */
 export async function createPrivateMonthly(connection, retainLedger, buildId = "development", remembered, bankName = () => "", now = () => new Date().toISOString(), inboxReader = unrecordedReader) {
     const { account, repository, branch } = connection;
+    const identity = { account, repository, branch };
     const scope = namespaceFor(connection);
     const cleared = retainLedger ? undefined : await clearRetained(scope);
     const retained = retainLedger
@@ -90,32 +91,38 @@ export async function createPrivateMonthly(connection, retainLedger, buildId = "
     const publications = observeSnapshotPublications(store);
     const localTimeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
     const capability = new ConnectionCapability({ writeDenied: connection.writeDenied === true, ledgerRetained: persistence === "retained" });
-    let credential = connection.token;
+    let credential = connection.token ?? "";
+    let credentialRevision = 0;
     let retainedConnection = connection.writeDenied !== undefined;
-    let credentialRejected = false;
+    let credentialRejected = !credential;
+    if (credentialRejected)
+        capability.rejectCredential();
     let released = false;
-    const clearedListeners = new Set();
-    let clearingReported = false;
+    const rejectedListeners = new Set();
+    let rejectionReported = false;
     const pushControllers = new Set();
     const stopPushes = () => { for (const controller of pushControllers)
         controller.abort(); };
     const transport = async (url, init) => {
+        const requestedCredential = credential;
+        if (!requestedCredential || new Headers(init.headers).get("authorization") !== `Bearer ${requestedCredential}`)
+            throw new Error("credential-needed");
         const response = await fetch(url, init);
+        if (credential !== requestedCredential || released)
+            return response;
         capability.observeBroaderAccess(hasClassicRepoScope(response.headers));
         const rateLimited = response.status === 403 && (response.headers.get("x-ratelimit-remaining") === "0" || response.headers.has("retry-after"));
         if (response.status === 401 || init.method === "GET" && !rateLimited && (response.status === 403 ||
             response.status === 404 && new URL(url).pathname === `/repos/${encodeURIComponent(account)}/${encodeURIComponent(repository)}`)) {
-            credentialRejected = true;
-            clearConnection();
+            rejectConnection();
         }
         return response;
     };
-    const adapterOptions = { owner: account, repo: repository, branch: branch, token: credential, fetch: transport };
-    const reader = new IncrementalGitHubReader(adapterOptions);
-    const mutation = new GitHubLedgerBatch({ ...adapterOptions, confirmed: publications.store });
+    let reader, mutation;
+    let synchronizer, push;
     const outbox = new LedgerOutbox(new LocalOutboxStore(store), publications.store, inboxReader, publications.notify);
-    const release = () => { released = true; stopPushes(); credential = ""; retainedConnection = false; preferences.dispose(); mutation.disconnect(); reader.disconnect(); capability.clear(); };
-    const clearConnection = () => { const cleared = remembered?.clear() !== false; const consentCleared = ledgerConsent.clear(connection); retainedConnection = false; release(); return cleared && consentCleared; };
+    const release = () => { released = true; credentialRevision++; stopPushes(); credential = ""; retainedConnection = false; preferences.dispose(); mutation?.disconnect(); reader?.disconnect(); capability.clear(); };
+    const clearConnection = () => { const cleared = remembered?.clear() !== false; const consentCleared = ledgerConsent.clear(identity); retainedConnection = false; release(); return cleared && consentCleared; };
     const defaultConfirmation = count => typeof window !== "undefined" && typeof window.confirm === "function" && window.confirm(`還有 ${count} 筆變更待同步，繼續後會捨棄。GitHub 上的帳本不變。`);
     const allowDiscard = async (confirm = defaultConfirmation) => {
         let count = (await outbox.store.read()).length;
@@ -159,19 +166,22 @@ export async function createPrivateMonthly(connection, retainLedger, buildId = "
         retainedConnection = remembered?.save({ account: account, repository: repository, branch: branch, token: credential }, capability.writeDenied) ?? false;
         return retainedConnection;
     };
-    const rejectConnection = async () => {
-        let dataCleared = clearConnection();
-        try {
-            await store.rejectCredential();
-        }
-        catch {
-            dataCleared = false;
-        }
-        if (!clearingReported) {
-            clearingReported = true;
-            for (const listener of clearedListeners)
-                listener(dataCleared);
-        }
+    const rejectConnection = () => {
+        if (released || rejectionReported)
+            return;
+        const writeDenied = capability.writeDenied;
+        credential = "";
+        credentialRejected = true;
+        stopPushes();
+        mutation?.disconnect();
+        reader?.disconnect();
+        capability.rejectCredential();
+        if (retainedConnection)
+            remembered?.save({ account, repository, branch }, writeDenied);
+        rejectionReported = true;
+        for (const listener of rejectedListeners)
+            listener();
+        publications.notify();
     };
     const commands = new LedgerCommands({
         store: outbox.snapshotStore, outbox, capability: () => capability.state,
@@ -183,8 +193,15 @@ export async function createPrivateMonthly(connection, retainLedger, buildId = "
     const query = createLocalViewerQuery(effectiveStore, localTimeZone);
     const search = createLocalViewerSearch(effectiveStore, bankName, localTimeZone);
     const report = createLocalViewerReportQuery(effectiveStore, localTimeZone);
-    const synchronizer = new LedgerSynchronizer(reader, publications.store, { now, throttleMs: 60_000 });
-    const push = new LedgerPush({ synchronizer, local: publications.store, outbox, remote: mutation, now });
+    const installCredential = (token) => {
+        const adapterOptions = { owner: account, repo: repository, branch, token, fetch: transport };
+        reader = new IncrementalGitHubReader(adapterOptions);
+        mutation = new GitHubLedgerBatch({ ...adapterOptions, confirmed: publications.store });
+        synchronizer = new LedgerSynchronizer(reader, publications.store, { now, throttleMs: 60_000 });
+        push = new LedgerPush({ synchronizer, local: publications.store, outbox, remote: mutation, now });
+    };
+    if (credential)
+        installCredential(credential);
     return {
         label: `${account}/${repository} · ${branch}`,
         kind: "private", owner: account, repo: repository, branch: branch,
@@ -194,8 +211,9 @@ export async function createPrivateMonthly(connection, retainLedger, buildId = "
         async push(request) {
             if (credentialRejected)
                 return { status: "credential-rejected" };
-            if (released || capability.state.status === "read-only")
+            if (released || !push || capability.state.status === "read-only")
                 return { status: "write-denied" };
+            const revision = credentialRevision;
             const controller = new AbortController();
             pushControllers.add(controller);
             const signal = request.signal ? AbortSignal.any([request.signal, controller.signal]) : controller.signal;
@@ -206,15 +224,16 @@ export async function createPrivateMonthly(connection, retainLedger, buildId = "
             finally {
                 pushControllers.delete(controller);
             }
-            if (released && !credentialRejected)
-                return { status: "temporary", reason: "offline" };
-            capability.observePush(outcome);
-            if (outcome.status === "write-denied" && retainedConnection)
-                remember();
-            if (credentialRejected || outcome.status === "credential-rejected") {
+            if (revision !== credentialRevision || credentialRejected || released) {
+                return credentialRejected ? { status: "credential-rejected" } : { status: "temporary", reason: "offline" };
+            }
+            if (outcome.status === "credential-rejected") {
                 await rejectConnection();
                 return { status: "credential-rejected" };
             }
+            capability.observePush(outcome);
+            if (outcome.status === "write-denied" && retainedConnection)
+                remember();
             return outcome;
         },
         organization: async (asOf) => queryViewerOrganization(await preferences.snapshot(), bankName, asOf),
@@ -239,7 +258,7 @@ export async function createPrivateMonthly(connection, retainLedger, buildId = "
                     return false;
                 if (released)
                     return false;
-                if (value && !ledgerConsent.save(connection))
+                if (value && !ledgerConsent.save(identity))
                     return false;
                 if (!value) {
                     capability.setLedgerRetention(false);
@@ -248,13 +267,13 @@ export async function createPrivateMonthly(connection, retainLedger, buildId = "
                 try {
                     const next = value ? await retainedStore(scope) : { store: new MemorySnapshotStore(), persistence: "session" };
                     if (value && next.persistence !== "retained") {
-                        ledgerConsent.clear(connection);
+                        ledgerConsent.clear(identity);
                         return false;
                     }
                     await store.replace(next.store, !value);
                     persistence = next.persistence;
                     capability.setLedgerRetention(persistence === "retained");
-                    if (!value && !ledgerConsent.clear(connection)) {
+                    if (!value && !ledgerConsent.clear(identity)) {
                         publications.notify();
                         return false;
                     }
@@ -264,7 +283,7 @@ export async function createPrivateMonthly(connection, retainLedger, buildId = "
                 catch {
                     capability.setLedgerRetention(persistence === "retained");
                     if (value)
-                        ledgerConsent.clear(connection);
+                        ledgerConsent.clear(identity);
                     return false;
                 }
             },
@@ -272,6 +291,7 @@ export async function createPrivateMonthly(connection, retainLedger, buildId = "
         get capability() { return capability.state; },
         get broaderAccess() { return capability.broaderAccess; },
         remember,
+        rejectCredential: rejectConnection,
         recheckWriteCapability() { if (credential) {
             capability.recheck();
             if (retainedConnection)
@@ -282,20 +302,38 @@ export async function createPrivateMonthly(connection, retainLedger, buildId = "
         search: request => search.search(request),
         listRecords: asOf => search.list(asOf),
         onPublication: listener => publications.subscribe(listener),
-        onConnectionCleared(listener) { clearedListeners.add(listener); return () => { clearedListeners.delete(listener); }; },
+        onCredentialRejected(listener) { rejectedListeners.add(listener); return () => { rejectedListeners.delete(listener); }; },
+        replaceCredential(replacement) {
+            if (released || replacement.account.toLowerCase() !== account.toLowerCase() ||
+                replacement.repository.toLowerCase() !== repository.toLowerCase() || replacement.branch !== branch || !replacement.token.trim())
+                throw new Error("different-ledger");
+            stopPushes();
+            mutation?.disconnect();
+            reader?.disconnect();
+            installCredential(replacement.token);
+            credentialRevision++;
+            credential = replacement.token;
+            credentialRejected = false;
+            rejectionReported = false;
+            capability.recheck();
+            if (retainedConnection)
+                remember();
+            publications.notify();
+        },
         ...(retained.persistence === "retained" ? {
             restoreLastView: (request) => preferences.hasPending().then(pending => pending ? null : store.readLastView(request, buildId)),
             cacheLastView: (request, value) => preferences.hasPending().then(pending => pending ? undefined : store.writeLastView(request, buildId, value)),
         } : {}),
         async synchronize({ period, manual, signal }) {
-            if (released || !period)
+            if (released || !credential || !synchronizer || !period)
                 return [];
-            if (released)
-                return [];
+            const revision = credentialRevision, currentSynchronizer = synchronizer;
             const outcomes = [];
             for (const month of utcPartitions(period.start, period.end)) {
-                const outcome = await synchronizer.sync({ requestedMonth: month, manual, ...(signal ? { signal } : {}) });
-                if (credentialRejected || outcome.status === "forbidden" || credential && outcome.status === "unauthorized") {
+                const outcome = await currentSynchronizer.sync({ requestedMonth: month, manual, ...(signal ? { signal } : {}) });
+                if (revision !== credentialRevision)
+                    return [];
+                if (credentialRejected || outcome.status === "forbidden" || outcome.status === "unauthorized" && !released) {
                     await rejectConnection();
                     return [credentialRejected ? { status: "unauthorized", commit: null, complete: false } : outcome];
                 }

@@ -2,6 +2,8 @@ import { defaultUserRulesDocument, isCanonicalUtcInstant, validateLedgerObjectAt
 import { RemoteReadError } from "./ports.js";
 /** Coverage marker of a retained snapshot whose cursor cannot be related to the remote head; never complete. */
 export const SCOPE_REBUILD = "scope-rebuild";
+/** Local validation repairs must be pulled even outside the requested/history-budget months. */
+export const LOCAL_OBJECT_REFETCH = "local-object-refetch:";
 const MONTH = /^\d{4}\/(?:0[1-9]|1[0-2])$/;
 const PARTITIONS = ["events", "details", "unrecorded"];
 const GLOBAL = ["", "rules", "rules/ai", "projects"];
@@ -101,8 +103,10 @@ export class LedgerSynchronizer {
         const previous = state.snapshot.cursor?.commit ?? null;
         let publishedCommit = previous;
         const oldComplete = state.snapshot.coverage.complete;
+        const refetch = state.snapshot.coverage.missing.filter(path => path.startsWith(LOCAL_OBJECT_REFETCH))
+            .map(path => path.slice(LOCAL_OBJECT_REFETCH.length));
         const requestedCovered = PARTITIONS.every(kind => state.covered.includes(`${kind}/v1/${request.requestedMonth}`));
-        if (!request.manual && requestedCovered && timestamp >= this.lastCheck &&
+        if (!request.manual && refetch.length === 0 && requestedCovered && timestamp >= this.lastCheck &&
             timestamp - this.lastCheck < (this.options.throttleMs ?? 60_000)) {
             return { status: "throttled", commit: previous, complete: oldComplete, remainingMonths: state.knownMonths.length -
                     state.knownMonths.filter(month => PARTITIONS.every(kind => state.covered.includes(`${kind}/v1/${month}`))).length };
@@ -114,7 +118,7 @@ export class LedgerSynchronizer {
             cancelled(request.signal);
             const pinnedCommit = head;
             this.lastCheck = timestamp;
-            if (head === previous && (oldComplete && state.knownMonths.includes(request.requestedMonth) ||
+            if (head === previous && refetch.length === 0 && (oldComplete && state.knownMonths.includes(request.requestedMonth) ||
                 historyBudget === 0 && requestedCovered && GLOBAL.every(path => state.covered.includes(path)))) {
                 return { status: "unchanged", commit: head, complete: oldComplete, remainingMonths: state.knownMonths.filter(month => PARTITIONS.some(kind => !state.covered.includes(`${kind}/v1/${month}`))).length };
             }
@@ -157,6 +161,8 @@ export class LedgerSynchronizer {
                     for (const path of GLOBAL)
                         selected.add(path);
                     for (const path of oldCovered)
+                        selected.add(path);
+                    for (const path of refetch)
                         selected.add(path);
                 }
                 const endMonth = Math.min(nextMonth + monthsPerBatch, historyBudget);

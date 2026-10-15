@@ -17,9 +17,10 @@ export function manualEntryView(draft, categories, picker, today, state, actions
         const title = el("div");
         title.append(icon("lock", 21), el("span", "唯讀，無法新增"));
         const needsRetention = state.capability?.status === "read-only" && state.capability.reason === "ledger-not-retained";
+        const needsCredential = state.capability?.status === "read-only" && state.capability.reason === "credential-needed";
         card.append(title);
         card.append(el("p", readOnlyReasonCopy(state.capability), "lk-readonly-copy"));
-        card.append(button(needsRetention ? "開啟保留帳本" : "重新檢查寫入權限", () => actions.later(needsRetention ? "6i" : "6p"), "lk-text-action lk-action-secondary"));
+        card.append(button(needsRetention ? "開啟保留帳本" : needsCredential ? "更換權杖" : "重新檢查寫入權限", () => actions.later(needsRetention ? "6i" : needsCredential ? "replace-token" : "6p"), "lk-text-action lk-action-secondary"));
         element.append(card);
         return { element };
     }
