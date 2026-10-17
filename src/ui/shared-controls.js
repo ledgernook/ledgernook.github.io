@@ -340,17 +340,30 @@ export function saveButton(label, run, enabled = true, busy = false) {
     control.setAttribute("aria-busy", String(busy));
     return control;
 }
+const textEntryHandlers = new WeakMap();
+/** Refresh a retained text entry's callback without resetting its composition state. */
+export function adoptTextEntryHandler(control, fresh) {
+    const current = textEntryHandlers.get(control), next = textEntryHandlers.get(fresh);
+    if (!current || !next)
+        return false;
+    current.change = next.change;
+    return true;
+}
+export function textEntryIsComposing(control) {
+    return textEntryHandlers.get(control)?.composing ?? false;
+}
 export function textEntry(value, label, change, className = "lk-text-entry") {
     const control = el("input", undefined, className);
     control.value = value;
     control.placeholder = label;
-    let composing = false;
+    const handler = { change, composing: false };
+    textEntryHandlers.set(control, handler);
     control.setAttribute("aria-label", label);
     control.dataset.field = label;
-    control.addEventListener("compositionstart", () => { composing = true; });
-    control.addEventListener("compositionend", () => { composing = false; change(control.value); });
-    control.addEventListener("input", event => { if (composing || event.isComposing)
-        return; change(control.value); });
+    control.addEventListener("compositionstart", () => { handler.composing = true; });
+    control.addEventListener("compositionend", () => { handler.composing = false; handler.change(control.value); });
+    control.addEventListener("input", event => { if (handler.composing || event.isComposing)
+        return; handler.change(control.value); });
     return control;
 }
 export function switchControl(label, on, change) {

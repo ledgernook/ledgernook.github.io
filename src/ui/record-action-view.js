@@ -10,7 +10,7 @@ import { el } from "./dom.js";
 import { dayLabel, displayAmount, recordDate } from "./ledger-format.js";
 import { recordPaymentMethodName } from "./payment-method-name.js";
 import { icon, iconButton } from "./icons.js";
-import { button, categoryBadge, deferNativeDateRender, destructiveConfirmation, nativeDateInput, saveButton, segments, switchControl, textEntry } from "./shared-controls.js";
+import { adoptTextEntryHandler, button, categoryBadge, deferNativeDateRender, destructiveConfirmation, nativeDateInput, saveButton, segments, switchControl, textEntry, textEntryIsComposing } from "./shared-controls.js";
 import { canSaveRecordAction, newRecurringPreview, recurringDateLimit } from "./record-action-model.js";
 import { screenDateFormatter } from "./screen-date-format.js";
 import { exchangeRateText, recurringAnchorDate, recurringRuleLine } from "./record-sheet-model.js";
@@ -66,8 +66,21 @@ export function recordActionView(action, record, result, initial, actions, today
     function render() {
         if (deferNativeDateRender(element, render))
             return;
-        const focus = document.activeElement instanceof HTMLInputElement && element.contains(document.activeElement) ? { field: document.activeElement.dataset.field, start: document.activeElement.selectionStart, end: document.activeElement.selectionEnd } : null;
-        element.replaceChildren();
+        const focused = document.activeElement instanceof HTMLInputElement && element.contains(document.activeElement) ? document.activeElement : null;
+        const focus = focused ? { field: focused.dataset.field, start: focused.selectionStart, end: focused.selectionEnd } : null;
+        const content = renderContent();
+        if (retainFocusedTextEntry(element, content, focused))
+            return;
+        element.replaceChildren(...content.childNodes);
+        if (focus?.field) {
+            const input = [...element.querySelectorAll("input")].find(item => item.dataset.field === focus.field);
+            input?.focus();
+            if (focus.start !== null)
+                input?.setSelectionRange(focus.start, focus.end);
+        }
+    }
+    function renderContent() {
+        const element = el("div", undefined, "lk-record-editor");
         const d = state.draft, save = () => actions.save();
         const recurring = record.recurring !== null || record.recurrence !== null;
         const enabled = state.writable !== false && canSaveRecordAction(action, d, record, result.report.records, state.preview, state.recurringPreview, result.timeZone) && !state.locked && !state.quotePending;
@@ -158,6 +171,7 @@ export function recordActionView(action, record, result, initial, actions, today
                 const control = button("", () => actions.change({ picking: d.picking === index ? null : index }), "lk-line-category");
                 control.append(categoryBadge(category, 32, 17), el("span", category.label));
                 const amount = textEntry(formatInput(line.amount.replace(/\.00$/, "")), `第 ${index + 1} 行金額`, value => patch({ amount: value }), "lk-line-amount lk-number");
+                amount.dataset.entryKey = `${line.id}:amount`;
                 amount.placeholder = "0";
                 amount.inputMode = "decimal";
                 row.append(control, amount);
@@ -172,6 +186,7 @@ export function recordActionView(action, record, result, initial, actions, today
                         node.append(chips(subs.map(item => ({ id: item.id, label: item.label })), line.categoryId, id => { patch({ categoryId: id }); actions.change({ picking: null }); }));
                 }
                 const note = textEntry(line.note, `第 ${index + 1} 行備註`, value => patch({ note: value }), "lk-line-note");
+                note.dataset.entryKey = `${line.id}:note`;
                 note.placeholder = "備註";
                 node.append(note);
                 lines.append(node);
@@ -308,15 +323,77 @@ export function recordActionView(action, record, result, initial, actions, today
             element.append(button("重新檢查寫入權限", actions.recheck, "lk-text-action"));
         if (state.locked && !state.busy && state.writable !== false)
             element.append(button("讀回確認並重試", save, "lk-editor-primary"));
-        if (focus?.field) {
-            const input = [...element.querySelectorAll("input")].find(item => item.dataset.field === focus.field);
-            input?.focus();
-            if (focus.start !== null)
-                input?.setSelectionRange(focus.start, focus.end);
-        }
+        return element;
     }
     render();
     return { element, update(next) { state = next; render(); } };
+}
+/** Rebuild siblings around the focused entry; never move its connected ancestor chain. */
+function retainFocusedTextEntry(element, content, focused) {
+    if (!focused || focused.readOnly || focused.disabled || !focused.dataset.field)
+        return false;
+    const inputs = [...content.querySelectorAll("input")];
+    const fresh = focused.dataset.entryKey
+        ? inputs.find(input => input.dataset.entryKey === focused.dataset.entryKey)
+        : inputs.find(input => input.dataset.field === focused.dataset.field);
+    if (!fresh)
+        return false;
+    const path = [];
+    let current = focused, next = fresh;
+    while (current && next) {
+        if (current.tagName !== next.tagName)
+            return false;
+        path.push({ current, fresh: next });
+        if (current === element || next === content)
+            break;
+        current = current.parentElement;
+        next = next.parentElement;
+    }
+    // Validate the entire path before changing either tree or the callback.
+    if (current !== element || next !== content || !adoptTextEntryHandler(focused, fresh))
+        return false;
+    focused.disabled = fresh.disabled;
+    focused.dataset.field = fresh.dataset.field;
+    if (fresh.dataset.entryKey)
+        focused.dataset.entryKey = fresh.dataset.entryKey;
+    else
+        delete focused.dataset.entryKey;
+    focused.placeholder = fresh.placeholder;
+    if (!textEntryIsComposing(focused) && focused.value !== fresh.value) {
+        const oldLength = focused.value.length;
+        const startFromEnd = focused.selectionStart === null ? null : oldLength - focused.selectionStart;
+        const endFromEnd = focused.selectionEnd === null ? null : oldLength - focused.selectionEnd;
+        focused.value = fresh.value;
+        if (startFromEnd !== null && endFromEnd !== null) {
+            focused.setSelectionRange(Math.max(0, focused.value.length - startFromEnd), Math.max(0, focused.value.length - endFromEnd));
+        }
+    }
+    path.forEach((pair, index) => {
+        for (const name of pair.current.getAttributeNames())
+            if (name !== "value" && pair.fresh.getAttribute(name) === null)
+                pair.current.removeAttribute(name);
+        for (const name of pair.fresh.getAttributeNames()) {
+            const value = pair.fresh.getAttribute(name);
+            if (name !== "value" && pair.current.getAttribute(name) !== value)
+                pair.current.setAttribute(name, value);
+        }
+        const child = path[index - 1];
+        if (!child)
+            return;
+        for (const node of [...pair.current.childNodes])
+            if (node !== child.current)
+                node.remove();
+        let before = true;
+        for (const node of [...pair.fresh.childNodes]) {
+            if (node === child.fresh)
+                before = false;
+            else if (before)
+                pair.current.insertBefore(node, child.current);
+            else
+                pair.current.append(node);
+        }
+    });
+    return true;
 }
 function formatInput(value) {
     const raw = value.replaceAll(",", "");
