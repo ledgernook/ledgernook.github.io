@@ -344,9 +344,13 @@ export function textEntry(value, label, change, className = "lk-text-entry") {
     const control = el("input", undefined, className);
     control.value = value;
     control.placeholder = label;
+    let composing = false;
     control.setAttribute("aria-label", label);
     control.dataset.field = label;
-    control.addEventListener("input", () => change(control.value));
+    control.addEventListener("compositionstart", () => { composing = true; });
+    control.addEventListener("compositionend", () => { composing = false; change(control.value); });
+    control.addEventListener("input", event => { if (composing || event.isComposing)
+        return; change(control.value); });
     return control;
 }
 export function switchControl(label, on, change) {
